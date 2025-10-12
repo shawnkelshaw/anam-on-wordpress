@@ -16,7 +16,7 @@ class CDNConnectivityTest {
     private $target_page_slug;
     
     public function __construct() {
-        $this->target_page_slug = 'using-anam-ai-digital-avatars-and-custom-llm-to-replace-long-form-data-entry';
+        $this->target_page_slug = 'your-target-page-slug-here';
         
         add_action('wp_footer', array($this, 'add_cdn_test'));
         add_action('wp_ajax_test_cdn_access', array($this, 'test_cdn_access'));
