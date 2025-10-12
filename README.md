@@ -20,15 +20,25 @@ A comprehensive WordPress plugin for integrating Anam.ai digital avatars using t
 ## 🔧 Plugin Files
 
 ### Production Ready
-- **`anam-on-wordpress.php`** - ✅ **Recommended** - The working implementation using ESM.sh CDN
+- **`anam-admin-settings.php`** - ✅ **Recommended** - Full admin interface with settings page
+- **`anam-on-wordpress.php`** - Working implementation (requires manual configuration)
 - **`anam-avatar-plugin.php`** - Clean main plugin with sanitized configuration
 
 ### Utilities
 - **`anam-api-tester.php`** - API key validation tool
 - **`anam-cdn-diagnostics.php`** - Diagnostic tool for CDN accessibility
+- **`anam-admin.js`** - JavaScript for admin interface functionality
 
 ## ⚙️ Configuration
 
+### Option 1: Admin Interface (Recommended)
+1. **Activate** `anam-admin-settings.php` plugin
+2. **Go to** WordPress Admin → Settings → Anam Avatar
+3. **Configure** your API key, avatar settings, and display options
+4. **Test** your configuration with the built-in test tool
+5. **Save** settings and view your avatar on the frontend
+
+### Option 2: Manual Configuration
 Update these values in your chosen plugin file:
 
 ```php
@@ -38,6 +48,15 @@ $this->voice_id = 'your-voice-id';
 $this->llm_id = 'your-llm-id';
 $this->target_page_slug = 'your-target-page-slug';
 ```
+
+## 🎛️ Admin Interface Features
+
+- **🔐 Secure API Key Storage** - Encrypted storage in WordPress database
+- **🎨 Avatar Customization** - Configure persona, avatar, voice, and LLM
+- **📍 Display Control** - Choose where and when avatar appears
+- **🧪 Built-in Testing** - Test API connection and configuration
+- **📱 Responsive Design** - Works on all device sizes
+- **🎯 Smart Positioning** - Multiple positioning options or custom containers
 
 ## 🎯 Custom Container Placement
 

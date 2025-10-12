@@ -216,4 +216,5 @@ class AnamOnWordPress {
     }
 }
 
-new AnamOnWordPress();
+// Old plugin disabled - using anam-admin-settings.php instead
+// new AnamOnWordPress();
