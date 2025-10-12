@@ -1,0 +1,35 @@
+# WordPress
+wp-config.php
+wp-content/uploads/
+wp-content/cache/
+wp-content/backup-db/
+wp-content/advanced-cache.php
+wp-content/wp-cache-config.php
+
+# Plugin specific
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
+
+# API Keys (security)
+*api-key*
+*secret*
+config.php
+
+# Node modules (if any)
+node_modules/
+package-lock.json
+
+# Composer
+vendor/
+composer.lock
