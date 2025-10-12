@@ -17,21 +17,15 @@ A comprehensive WordPress plugin for integrating Anam.ai digital avatars using t
 3. Activate the desired plugin version through the 'Plugins' menu
 4. Configure your API key and persona settings
 
-## 🔧 Plugin Versions
+## 🔧 Plugin Files
 
 ### Production Ready
-- **`anam-esm-only.php`** - ✅ **Recommended** - Uses working ESM.sh CDN
+- **`anam-esm-only.php`** - ✅ **Recommended** - The working implementation using ESM.sh CDN
+- **`anam-avatar-plugin.php`** - Clean main plugin with sanitized configuration
+
+### Utilities
 - **`anam-api-tester.php`** - API key validation tool
-
-### Development/Debug Versions
-- **`anam-official-format.php`** - Follows exact official documentation format
-- **`anam-clean-version.php`** - Minimal implementation with CDN fallbacks
 - **`cdn-connectivity-test.php`** - Diagnostic tool for CDN accessibility
-
-### Legacy/Experimental
-- **`anam-avatar-integration.php`** - Original implementation
-- **`anam-local-sdk.php`** - Local SDK hosting approach
-- **`debug-version.php`** - Enhanced logging version
 
 ## ⚙️ Configuration
 
