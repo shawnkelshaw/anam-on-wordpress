@@ -548,8 +548,18 @@ class AnamAdminSettings {
         ?>
         <!-- Anam Avatar Integration -->
         <?php if ($display_method === 'page_position'): ?>
-        <div id="anam-avatar-status" style="position: fixed; <?php echo $this->get_position_styles($position); ?>; z-index: 9999; background: rgba(0,0,0,0.9); color: white; padding: 15px; border-radius: 8px; font-size: 14px; text-align: center; max-width: 300px;">
-            🎯 Loading avatar...<br><small>Initializing Anam.ai</small>
+        <div id="anam-avatar-widget" style="position: fixed; <?php echo $this->get_position_styles($position); ?>; z-index: 9999; width: 300px; background: white; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); overflow: hidden;">
+            <div style="padding: 20px; text-align: center; position: relative;">
+                <button id="anam-close-btn" style="position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border: none; background: #f0f0f0; border-radius: 50%; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;">&times;</button>
+                <div style="font-size: 32px; margin-bottom: 15px;">💬</div>
+                <h3 style="margin: 0 0 10px 0; color: #333; font-size: 16px;">Ready to chat?</h3>
+                <p style="margin: 0 0 20px 0; color: #666; font-size: 14px; line-height: 1.4;">
+                    Start a conversation with our AI assistant
+                </p>
+                <button id="anam-start-btn" style="padding: 12px 24px; border: none; background: #007cba; color: white; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                    Start Conversation
+                </button>
+            </div>
         </div>
         <?php endif; ?>
 
@@ -568,12 +578,28 @@ class AnamAdminSettings {
         
         let anamClient = null;
         
+        // Handle widget button interactions
+        if (ANAM_CONFIG.displayMethod === 'page_position') {
+            const widget = document.getElementById('anam-avatar-widget');
+            const startBtn = document.getElementById('anam-start-btn');
+            const closeBtn = document.getElementById('anam-close-btn');
+            
+            // Start conversation button
+            startBtn.addEventListener('click', () => {
+                initAvatar();
+            });
+            
+            // Close button
+            closeBtn.addEventListener('click', () => {
+                widget.remove();
+                console.log('🚫 User closed avatar widget');
+            });
+        } else {
+            // For element_id method, initialize directly
+            initAvatar();
+        }
+        
         function updateStatus(message, isError = false) {
-            const status = document.getElementById('anam-avatar-status');
-            if (status) {
-                status.innerHTML = message;
-                status.style.background = isError ? 'rgba(220, 53, 69, 0.9)' : 'rgba(0,0,0,0.9)';
-            }
             console.log(isError ? '❌' : '🎯', message.replace(/<[^>]*>/g, ''));
         }
         
@@ -634,27 +660,58 @@ class AnamAdminSettings {
                         throw new Error(`Container "${targetElement}" not found on this page`);
                     }
                     
+                    // Add close button to custom container
+                    const closeBtn = document.createElement('button');
+                    closeBtn.innerHTML = '&times;';
+                    closeBtn.style.cssText = 'position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border: none; background: rgba(255,255,255,0.9); border-radius: 50%; cursor: pointer; font-size: 16px; z-index: 10001;';
+                    closeBtn.addEventListener('click', () => {
+                        customContainer.innerHTML = '';
+                        console.log('🚫 Avatar closed by user');
+                    });
+                    customContainer.style.position = 'relative';
+                    customContainer.appendChild(closeBtn);
+                    
                     // Use the custom container directly
                     await anamClient.streamToVideoElement(targetElement);
                     
                 } else if (ANAM_CONFIG.displayMethod === 'page_position') {
-                    // Page Position method - create fixed positioned video element
-                    const container = document.createElement('div');
-                    container.id = 'anam-default-container';
-                    container.style.cssText = `position: fixed; ${getPositionStyles(ANAM_CONFIG.position)}; z-index: 9999;`;
-                    document.body.appendChild(container);
+                    // Page Position method - replace widget content with video
+                    const widget = document.getElementById('anam-avatar-widget');
                     
                     const video = document.createElement('video');
                     video.id = 'anam-default-video';
                     video.width = 300;
                     video.height = 400;
-                    video.autoplay = true;
+                    video.autoplay = true; // Need autoplay for streaming to work
                     video.playsInline = true;
-                    video.muted = true;
-                    video.style.cssText = 'border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); background: #000;';
-                    container.appendChild(video);
+                    video.muted = false;
+                    video.controls = false;
+                    video.style.cssText = 'width: 100%; height: auto; border-radius: 10px; background: #000; display: block;';
+                    
+                    // Replace widget content with video
+                    widget.innerHTML = '';
+                    widget.style.padding = '0';
+                    // Maintain the widget's fixed positioning and size
+                    widget.style.position = 'fixed';
+                    widget.style.width = '300px';
+                    widget.style.height = 'auto';
+                    widget.appendChild(video);
+                    
+                    // Add close button
+                    const closeBtn = document.createElement('button');
+                    closeBtn.innerHTML = '&times;';
+                    closeBtn.style.cssText = 'position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border: none; background: rgba(255,255,255,0.9); border-radius: 50%; cursor: pointer; font-size: 16px; z-index: 10001;';
+                    closeBtn.addEventListener('click', () => {
+                        widget.remove();
+                        console.log('🚫 Avatar closed by user');
+                    });
+                    widget.appendChild(closeBtn);
+                    
+                    console.log('🎥 Video element created and added to widget');
                     
                     await anamClient.streamToVideoElement('anam-default-video');
+                    
+                    console.log('🎬 Streaming to video element completed');
                     
                 } else {
                     throw new Error('Invalid display method: ' + ANAM_CONFIG.displayMethod);
@@ -683,8 +740,6 @@ class AnamAdminSettings {
                 default: return 'bottom: 20px; right: 20px';
             }
         }
-        
-        initAvatar();
         
         window.anamAvatar = {
             client: () => anamClient,
