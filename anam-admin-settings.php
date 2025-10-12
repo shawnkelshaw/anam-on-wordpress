@@ -587,12 +587,291 @@ class AnamAdminSettings {
                 initAvatar();
             });
         } else {
-            // For element_id method, initialize directly
-            initAvatar();
+            // For element_id method, show welcome screen in container
+            showElementIdWelcome();
         }
         
         function updateStatus(message, isError = false) {
             console.log(isError ? '❌' : '🎯', message.replace(/<[^>]*>/g, ''));
+        }
+        
+        function showElementIdWelcome() {
+            console.log('🎯 Setting up Element ID welcome screen...');
+            
+            const targetElement = ANAM_CONFIG.containerId;
+            
+            if (!targetElement) {
+                console.error('❌ Element ID method selected but no container ID specified');
+                return;
+            }
+            
+            const customContainer = document.getElementById(targetElement);
+            if (!customContainer) {
+                console.error(`❌ Container "${targetElement}" not found on this page`);
+                return;
+            }
+            
+            // Show welcome screen in the custom container
+            customContainer.innerHTML = `
+                <div style="padding: 20px; text-align: center; position: relative; background: white; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
+                    <div style="font-size: 32px; margin-bottom: 15px;">💬</div>
+                    <h3 style="margin: 0 0 10px 0; color: #333; font-size: 16px;">Ready to chat?</h3>
+                    <p style="margin: 0 0 20px 0; color: #666; font-size: 14px; line-height: 1.4;">
+                        Start a conversation with our AI assistant
+                    </p>
+                    <button id="anam-element-start-btn" style="padding: 12px 24px; border: none; background: #007cba; color: white; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                        Start Conversation
+                    </button>
+                </div>
+            `;
+            
+            // Set container positioning for buttons
+            customContainer.style.position = 'relative';
+            
+            // Add start button event listener
+            const startBtn = document.getElementById('anam-element-start-btn');
+            startBtn.addEventListener('click', () => {
+                initElementIdAvatar();
+            });
+            
+            console.log('✅ Element ID welcome screen ready');
+        }
+        
+        async function initElementIdAvatar() {
+            console.log('🎯 Initializing Element ID avatar...');
+            
+            const targetElement = ANAM_CONFIG.containerId;
+            const customContainer = document.getElementById(targetElement);
+            
+            if (!customContainer) {
+                console.error(`❌ Container "${targetElement}" not found`);
+                return;
+            }
+            
+            try {
+                // Show loading state
+                customContainer.innerHTML = `
+                    <div style="padding: 40px 20px; text-align: center; background: #f8f9fa; border-radius: 12px;">
+                        <div style="display: inline-block; width: 40px; height: 40px; border: 4px solid #e3e3e3; border-top: 4px solid #007cba; border-radius: 50%; animation: anam-spin 1s linear infinite; margin-bottom: 15px;"></div>
+                        <div style="color: #666; font-size: 14px;">Setting up your avatar...</div>
+                        <div style="color: #999; font-size: 12px; margin-top: 5px;">This may take a moment</div>
+                    </div>
+                    <style>
+                        @keyframes anam-spin {
+                            0% { transform: rotate(0deg); }
+                            100% { transform: rotate(360deg); }
+                        }
+                    </style>
+                `;
+                
+                // Get session token and create client
+                const sessionToken = await getSessionToken();
+                updateStatus('✅ Token obtained');
+                
+                updateStatus('🔧 Creating client...');
+                anamClient = createClient(sessionToken);
+                console.log('✅ Client created:', anamClient);
+                
+                updateStatus('📹 Starting stream...');
+                
+                // Create video element (hidden initially)
+                const video = document.createElement('video');
+                video.id = 'anam-element-video';
+                video.width = 400;
+                video.height = 300;
+                video.autoplay = true;
+                video.playsInline = true;
+                video.muted = false;
+                video.controls = false;
+                video.style.cssText = 'width: 100%; height: auto; border-radius: 12px; background: #000; display: none;';
+                
+                // Add video to container (hidden)
+                customContainer.appendChild(video);
+                
+                // Stream to video element
+                await anamClient.streamToVideoElement('anam-element-video');
+                
+                console.log('🎬 Streaming to element completed');
+                
+                // Replace loading with video and controls
+                customContainer.innerHTML = '';
+                video.style.display = 'block';
+                customContainer.appendChild(video);
+                
+                // Add expand button
+                const expandBtn = document.createElement('button');
+                expandBtn.innerHTML = '⛶';
+                expandBtn.title = 'Expand to full screen';
+                expandBtn.style.cssText = 'position: absolute; top: 8px; left: 8px; width: 24px; height: 24px; border: none; background: rgba(255,255,255,0.9); border-radius: 50%; cursor: pointer; font-size: 14px; z-index: 10001; display: flex; align-items: center; justify-content: center;';
+                expandBtn.addEventListener('click', () => {
+                    expandElementToModal(customContainer, video);
+                });
+                customContainer.appendChild(expandBtn);
+                
+                // Add close button
+                const closeBtn = document.createElement('button');
+                closeBtn.innerHTML = '&times;';
+                closeBtn.title = 'Close avatar';
+                closeBtn.style.cssText = 'position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border: none; background: rgba(255,255,255,0.9); border-radius: 50%; cursor: pointer; font-size: 16px; z-index: 10001; display: flex; align-items: center; justify-content: center;';
+                closeBtn.addEventListener('click', async () => {
+                    await closeElementIdAvatar(customContainer);
+                });
+                customContainer.appendChild(closeBtn);
+                
+                console.log('✅ Element ID avatar ready');
+                
+            } catch (error) {
+                console.error('❌ Error initializing Element ID avatar:', error);
+                customContainer.innerHTML = `
+                    <div style="padding: 20px; text-align: center; background: #fee; border-radius: 12px; color: #c33;">
+                        <div style="font-size: 24px; margin-bottom: 10px;">⚠️</div>
+                        <div style="font-size: 14px; font-weight: bold;">Avatar initialization failed</div>
+                        <div style="font-size: 12px; margin-top: 5px;">${error.message}</div>
+                        <button onclick="showElementIdWelcome()" style="margin-top: 15px; padding: 8px 16px; border: none; background: #007cba; color: white; border-radius: 4px; cursor: pointer;">Try Again</button>
+                    </div>
+                `;
+            }
+        }
+        
+        function expandElementToModal(container, video) {
+            console.log('🔄 Expanding element avatar to modal...');
+            
+            // Store reference to original container
+            originalWidget = container;
+            
+            // Create modal
+            const { modal, modalContent } = createModal();
+            currentModal = modal;
+            
+            // Add collapse button to modal (left side)
+            const collapseBtn = document.createElement('button');
+            collapseBtn.innerHTML = '⤡';
+            collapseBtn.title = 'Return to container';
+            collapseBtn.style.cssText = 'position: absolute; top: 15px; left: 15px; width: 32px; height: 32px; border: none; background: rgba(255,255,255,0.9); border-radius: 50%; cursor: pointer; font-size: 18px; z-index: 100001; display: flex; align-items: center; justify-content: center;';
+            collapseBtn.addEventListener('click', () => collapseElementToContainer(container, video));
+            modalContent.appendChild(collapseBtn);
+            
+            // Add close button to modal (right side)
+            const closeBtn = document.createElement('button');
+            closeBtn.innerHTML = '&times;';
+            closeBtn.title = 'Close avatar';
+            closeBtn.style.cssText = 'position: absolute; top: 15px; right: 15px; width: 32px; height: 32px; border: none; background: rgba(255,255,255,0.9); border-radius: 50%; cursor: pointer; font-size: 20px; z-index: 100001; display: flex; align-items: center; justify-content: center;';
+            closeBtn.addEventListener('click', async () => {
+                await closeElementIdAvatar(container);
+            });
+            modalContent.appendChild(closeBtn);
+            
+            // Move video to modal
+            video.style.cssText = 'width: 100%; height: 100%; object-fit: cover; border-radius: 12px;';
+            modalContent.appendChild(video);
+            
+            // Hide original container
+            container.style.display = 'none';
+            
+            // Add backdrop click to collapse
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    collapseElementToContainer(container, video);
+                }
+            });
+            
+            // Add keyboard support
+            const handleKeydown = (e) => {
+                if (e.key === 'Escape') {
+                    collapseElementToContainer(container, video);
+                    document.removeEventListener('keydown', handleKeydown);
+                }
+            };
+            document.addEventListener('keydown', handleKeydown);
+            
+            // Add modal to page
+            document.body.appendChild(modal);
+            
+            // Fade in modal
+            setTimeout(() => {
+                modal.style.opacity = '1';
+            }, 10);
+            
+            console.log('✅ Element avatar expanded to modal');
+        }
+        
+        function collapseElementToContainer(container, video) {
+            console.log('🔄 Collapsing avatar to container...');
+            
+            if (!currentModal) {
+                console.error('❌ No modal reference found');
+                return;
+            }
+            
+            // Restore video styling for container
+            video.style.cssText = 'width: 100%; height: auto; border-radius: 12px; background: #000; display: block;';
+            
+            // Move video back to container
+            container.innerHTML = '';
+            container.appendChild(video);
+            
+            // Re-add buttons to container
+            const expandBtn = document.createElement('button');
+            expandBtn.innerHTML = '⛶';
+            expandBtn.title = 'Expand to full screen';
+            expandBtn.style.cssText = 'position: absolute; top: 8px; left: 8px; width: 24px; height: 24px; border: none; background: rgba(255,255,255,0.9); border-radius: 50%; cursor: pointer; font-size: 14px; z-index: 10001; display: flex; align-items: center; justify-content: center;';
+            expandBtn.addEventListener('click', () => {
+                expandElementToModal(container, video);
+            });
+            container.appendChild(expandBtn);
+            
+            const closeBtn = document.createElement('button');
+            closeBtn.innerHTML = '&times;';
+            closeBtn.title = 'Close avatar';
+            closeBtn.style.cssText = 'position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border: none; background: rgba(255,255,255,0.9); border-radius: 50%; cursor: pointer; font-size: 16px; z-index: 10001; display: flex; align-items: center; justify-content: center;';
+            closeBtn.addEventListener('click', async () => {
+                await closeElementIdAvatar(container);
+            });
+            container.appendChild(closeBtn);
+            
+            // Show original container
+            container.style.display = 'block';
+            
+            // Remove modal
+            currentModal.style.opacity = '0';
+            setTimeout(() => {
+                if (currentModal) {
+                    currentModal.remove();
+                    currentModal = null;
+                }
+            }, 300);
+            
+            console.log('✅ Avatar collapsed to container');
+        }
+        
+        async function closeElementIdAvatar(container) {
+            console.log('🚫 Closing Element ID avatar completely...');
+            
+            try {
+                // Stop streaming if client exists
+                if (anamClient) {
+                    console.log('🛑 Stopping avatar stream...');
+                    await anamClient.stopStreaming();
+                    console.log('✅ Stream stopped');
+                }
+            } catch (error) {
+                console.error('❌ Error stopping stream:', error);
+            }
+            
+            // Remove modal if it exists
+            if (currentModal) {
+                currentModal.remove();
+                currentModal = null;
+            }
+            
+            // Reset client
+            anamClient = null;
+            originalWidget = null;
+            
+            // Return to welcome screen
+            showElementIdWelcome();
+            
+            console.log('✅ Element ID avatar closed and reset to welcome screen');
         }
         
         // Modal and expand/collapse functionality
@@ -842,34 +1121,7 @@ class AnamAdminSettings {
                 updateStatus('📹 Starting stream...');
                 
                 // Handle different display methods
-                if (ANAM_CONFIG.displayMethod === 'element_id') {
-                    // Element ID method - stream to specified container
-                    const targetElement = ANAM_CONFIG.containerId;
-                    
-                    if (!targetElement) {
-                        throw new Error('Element ID method selected but no container ID specified');
-                    }
-                    
-                    const customContainer = document.getElementById(targetElement);
-                    if (!customContainer) {
-                        throw new Error(`Container "${targetElement}" not found on this page`);
-                    }
-                    
-                    // Add close button to custom container
-                    const closeBtn = document.createElement('button');
-                    closeBtn.innerHTML = '&times;';
-                    closeBtn.style.cssText = 'position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border: none; background: rgba(255,255,255,0.9); border-radius: 50%; cursor: pointer; font-size: 16px; z-index: 10001;';
-                    closeBtn.addEventListener('click', () => {
-                        customContainer.innerHTML = '';
-                        console.log('🚫 Avatar closed by user');
-                    });
-                    customContainer.style.position = 'relative';
-                    customContainer.appendChild(closeBtn);
-                    
-                    // Use the custom container directly
-                    await anamClient.streamToVideoElement(targetElement);
-                    
-                } else if (ANAM_CONFIG.displayMethod === 'page_position') {
+                if (ANAM_CONFIG.displayMethod === 'page_position') {
                     // Page Position method - replace widget content with video
                     const widget = document.getElementById('anam-avatar-widget');
                     
