@@ -19,10 +19,10 @@ class AnamAPITester {
     private $target_page_slug;
     
     public function __construct() {
-        $this->api_key = 'MWZjNWY0YjgtMGM1Zi00OWRiLTgwMjgtNWM4N2FjNGY4NGU0OmhrNkd5ZVpmWmNSTFlFR3Q0dWluNWpwclY0NlpJWitjTnZOMnZsQmlWWFU9';
-        $this->avatar_id = '30fa96d0-26c4-4e55-94a0-517025942e18';
-        $this->voice_id = 'b7bf471f-5435-49f8-a979-4483e4ccc10f';
-        $this->target_page_slug = 'using-anam-ai-digital-avatars-and-custom-llm-to-replace-long-form-data-entry';
+        $this->api_key = 'your-anam-api-key-here';
+        $this->avatar_id = 'your-avatar-id-here';
+        $this->voice_id = 'your-voice-id-here';
+        $this->target_page_slug = 'your-target-page-slug-here';
         
         add_action('wp_footer', array($this, 'add_api_tester'));
         add_action('wp_ajax_test_anam_api', array($this, 'test_api_key'));
