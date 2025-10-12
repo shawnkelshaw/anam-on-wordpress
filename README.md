@@ -20,12 +20,12 @@ A comprehensive WordPress plugin for integrating Anam.ai digital avatars using t
 ## 🔧 Plugin Files
 
 ### Production Ready
-- **`anam-esm-only.php`** - ✅ **Recommended** - The working implementation using ESM.sh CDN
+- **`anam-on-wordpress.php`** - ✅ **Recommended** - The working implementation using ESM.sh CDN
 - **`anam-avatar-plugin.php`** - Clean main plugin with sanitized configuration
 
 ### Utilities
 - **`anam-api-tester.php`** - API key validation tool
-- **`cdn-connectivity-test.php`** - Diagnostic tool for CDN accessibility
+- **`anam-cdn-diagnostics.php`** - Diagnostic tool for CDN accessibility
 
 ## ⚙️ Configuration
 

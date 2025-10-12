@@ -1,9 +1,10 @@
 <?php
 /**
- * Plugin Name: Anam Avatar ESM Only
- * Description: Anam.ai integration using ONLY working ESM.sh CDN
+ * Plugin Name: Anam on WordPress
+ * Description: Anam.ai digital avatar integration for WordPress using JavaScript SDK
  * Version: 1.0.0
  * Author: Shawn Kelshaw
+ * Plugin URI: https://github.com/shawnkelshaw/anam-on-wordpress
  */
 
 // Prevent direct access
@@ -11,7 +12,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-class AnamAvatarESMOnly {
+class AnamOnWordPress {
     
     private $api_key;
     private $avatar_id;
@@ -215,4 +216,4 @@ class AnamAvatarESMOnly {
     }
 }
 
-new AnamAvatarESMOnly();
+new AnamOnWordPress();

@@ -15,9 +15,9 @@ All notable changes to the Anam.ai WordPress Integration plugin will be document
 - Shared hosting compatibility solutions
 
 ### Features
-- **anam-esm-only.php** - Production-ready ESM implementation
+- **anam-on-wordpress.php** - Production-ready ESM implementation
 - **anam-api-tester.php** - API key validation tool
-- **cdn-connectivity-test.php** - CDN accessibility diagnostics
+- **anam-cdn-diagnostics.php** - CDN accessibility diagnostics
 - **anam-official-format.php** - Official documentation format
 - **anam-clean-version.php** - Minimal implementation
 - Custom div container support (`anam-stream-container`)
