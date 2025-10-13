@@ -9,6 +9,10 @@ A comprehensive WordPress plugin for integrating Anam.ai digital avatars using t
 - **Comprehensive Debugging**: Built-in connectivity tests and API validation
 - **Secure Implementation**: Server-side session token generation
 - **Hosting Compatibility**: Solutions for shared hosting restrictions
+- **🆕 Complete Transcript Processing**: Server-side conversation capture and analysis
+- **🆕 Google Cloud Integration**: Direct parser tool integration via iframe postMessage
+- **🆕 Database Backup**: Full conversation history with audit trails
+- **🆕 Background Processing**: WordPress cron-based transcript analysis
 
 ## 📦 Installation
 
@@ -20,7 +24,8 @@ A comprehensive WordPress plugin for integrating Anam.ai digital avatars using t
 ## 🔧 Plugin Files
 
 ### Production Ready
-- **`anam-admin-settings.php`** - ✅ **Recommended** - Full admin interface with settings page
+- **`anam-admin-settings.php`** - ✅ **Recommended** - Full admin interface with settings page + transcript processing
+- **`anam-transcript-handler.php`** - 🆕 **Complete transcript processing system** - Server-side conversation analysis
 - **`anam-on-wordpress.php`** - Working implementation (requires manual configuration)
 - **`anam-avatar-plugin.php`** - Clean main plugin with sanitized configuration
 
@@ -135,6 +140,46 @@ For issues related to:
 - **Anam.ai API**: Contact Anam.ai support
 - **WordPress integration**: Check WordPress documentation
 
+## 🆕 Transcript Processing System
+
+### Overview
+Complete server-side conversation capture and analysis system with Google Cloud parser tool integration.
+
+### Features
+- **Real-time Capture**: Automatic transcript collection during avatar conversations
+- **Dual Processing**: Client-side parser tool + server-side database backup
+- **Background Analysis**: WordPress cron-based processing pipeline
+- **Audit Trail**: Complete conversation history with timestamps and metadata
+- **Security**: Nonce verification, input sanitization, and origin validation
+
+### Architecture
+```
+Avatar Conversation → Transcript Capture → Dual Processing:
+                                        ├── Parser Tool (iframe postMessage)
+                                        └── WordPress Database (backup/analysis)
+```
+
+### Setup
+1. **Deploy Parser Tool**: Deploy your Google AI Studio app to Google Cloud
+2. **Configure URL**: Add parser tool URL in WordPress Admin → Settings → Anam Avatar
+3. **Enable Processing**: Check "Enable transcript processing" checkbox
+4. **Test**: Have a conversation and close the avatar to trigger processing
+
+### Database Schema
+- **Table**: `wp_anam_conversations`
+- **Fields**: ID, transcript_raw (JSON), transcript_plain (text), timestamp, page_url, status, created_at, processed_at, parser_response
+
+### API Integration
+- **Endpoint**: `wp-ajax.php?action=anam_process_transcript`
+- **Method**: POST with nonce verification
+- **Response**: JSON with conversation ID and processing status
+
+### Error Handling
+- Comprehensive logging with `error_log()`
+- Graceful failure recovery
+- Status tracking (pending, processing, completed, error)
+- Rollback capabilities for safe deployment
+
 ## 🏗️ Development History
 
-This plugin was developed through extensive testing and debugging on shared hosting environments, resulting in multiple implementation approaches to handle various hosting restrictions and CDN accessibility issues.
+This plugin was developed through extensive testing and debugging on shared hosting environments, resulting in multiple implementation approaches to handle various hosting restrictions and CDN accessibility issues. The transcript processing system was added as a complete server-side solution for conversation analysis and integration with external AI tools.
