@@ -251,6 +251,23 @@ class AnamSessionsAdmin {
                                         </div>
                                         
                                         <div class="anam-accordion-section">
+                                            <h4>Conversation Transcript</h4>
+                                            <?php if (!empty($session->transcript_plain)): ?>
+                                                <div class="anam-transcript">
+                                                    <?php echo esc_html($session->transcript_plain); ?>
+                                                </div>
+                                            <?php elseif (!empty($session->transcript_raw)): ?>
+                                                <div class="anam-transcript">
+                                                    <strong>Raw Data:</strong><br>
+                                                    <?php echo esc_html($session->transcript_raw); ?>
+                                                </div>
+                                            <?php else: ?>
+                                                <p><em>No transcript data available for this session.</em></p>
+                                                <p><small>This may be because the conversation is still being processed or the transcript fetch failed.</small></p>
+                                            <?php endif; ?>
+                                        </div>
+                                        
+                                        <div class="anam-accordion-section">
                                             <h4>Vehicle Data <button class="anam-button anam-button-secondary anam-edit-data" data-session-id="<?php echo esc_attr($session->id); ?>" style="float: right;">Edit</button></h4>
                                             <div class="anam-data-view">
                                                 <?php if ($has_data): ?>

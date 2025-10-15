@@ -33,8 +33,6 @@ class AnamAdminSettings {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'init_settings'));
         add_action('wp_footer', array($this, 'add_avatar_integration'));
-        add_action('wp_ajax_anam_process_transcript', array($this, 'handle_process_transcript'));
-        add_action('wp_ajax_nopriv_anam_process_transcript', array($this, 'handle_process_transcript'));
         add_action('wp_ajax_anam_send_session', array($this, 'handle_send_session'));
         add_action('wp_ajax_nopriv_anam_send_session', array($this, 'handle_send_session'));
         add_action('wp_ajax_anam_session_token', array($this, 'handle_session_token'));
@@ -2075,45 +2073,6 @@ class AnamAdminSettings {
         ));
     }
     
-    // Handle process transcript requests (for session storage)
-    public function handle_process_transcript() {
-        // Verify nonce
-        if (!wp_verify_nonce($_POST['nonce'], 'anam_session')) {
-            wp_send_json_error('Invalid nonce');
-        }
-        
-        $session_id = sanitize_text_field($_POST['session_id']);
-        if (empty($session_id)) {
-            wp_send_json_error('Session ID required');
-        }
-        
-        // Store session data for audit trail
-        $session_data = array(
-            'session_id' => $session_id,
-            'timestamp' => sanitize_text_field($_POST['timestamp']),
-            'page_url' => sanitize_text_field($_POST['page_url']),
-            'metadata' => sanitize_text_field($_POST['metadata']),
-            'processed_at' => current_time('mysql'),
-        );
-        
-        // Save to WordPress options (you could also use a custom table)
-        $existing_sessions = get_option('anam_session_log', array());
-        $existing_sessions[] = $session_data;
-        
-        // Keep only last 100 sessions to prevent database bloat
-        if (count($existing_sessions) > 100) {
-            $existing_sessions = array_slice($existing_sessions, -100);
-        }
-        
-        update_option('anam_session_log', $existing_sessions);
-        
-        wp_send_json_success(array(
-            'message' => 'Session stored successfully',
-            'session_id' => $session_id,
-            'timestamp' => current_time('mysql')
-        ));
-    }
-
     // Handle session token requests
     public function handle_session_token() {
         // Verify nonce
