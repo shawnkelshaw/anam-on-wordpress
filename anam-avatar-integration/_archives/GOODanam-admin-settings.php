@@ -12,9 +12,6 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// Include transcript handler (safe - will self-disable if feature flag is off)
-require_once(plugin_dir_path(__FILE__) . 'anam-transcript-handler.php');
-
 class AnamAdminSettings {
     
     private $option_group = 'anam_settings';
@@ -61,13 +58,6 @@ class AnamAdminSettings {
             'anam_display_section',
             'Display Settings',
             array($this, 'display_section_callback'),
-            'anam-settings'
-        );
-        
-        add_settings_section(
-            'anam_integration_section',
-            'Parser Tool Integration',
-            array($this, 'integration_section_callback'),
             'anam-settings'
         );
         
@@ -152,23 +142,6 @@ class AnamAdminSettings {
             array($this, 'page_selection_field'),
             'anam-settings',
             'anam_display_section'
-        );
-        
-        // Parser Tool Integration Settings
-        add_settings_field(
-            'parser_tool_url',
-            'Parser Tool URL',
-            array($this, 'parser_tool_url_field'),
-            'anam-settings',
-            'anam_integration_section'
-        );
-        
-        add_settings_field(
-            'enable_transcript_processing',
-            'Enable Transcript Processing',
-            array($this, 'enable_transcript_processing_field'),
-            'anam-settings',
-            'anam_integration_section'
         );
     }
     
@@ -465,39 +438,6 @@ class AnamAdminSettings {
         echo '</div>';
     }
     
-    public function integration_section_callback() {
-        echo '<p>Configure transcript processing and Parser Tool integration for conversation analysis.</p>';
-    }
-    
-    public function parser_tool_url_field() {
-        $options = get_option($this->option_name, array());
-        $value = isset($options['parser_tool_url']) ? $options['parser_tool_url'] : '';
-        ?>
-        <input type="url" name="<?php echo $this->option_name; ?>[parser_tool_url]" 
-               value="<?php echo esc_attr($value); ?>" class="regular-text" 
-               placeholder="https://your-parser-tool.com/api/process" />
-        <p class="description">
-            URL of your Google AI Studio Parser Tool or custom processing endpoint. 
-            Leave empty to disable transcript processing.
-        </p>
-        <?php
-    }
-    
-    public function enable_transcript_processing_field() {
-        $options = get_option($this->option_name, array());
-        $enabled = isset($options['enable_transcript_processing']) ? $options['enable_transcript_processing'] : false;
-        ?>
-        <label>
-            <input type="checkbox" name="<?php echo $this->option_name; ?>[enable_transcript_processing]" 
-                   value="1" <?php checked($enabled, true); ?> />
-            Enable automatic transcript processing when conversations end
-        </label>
-        <p class="description">
-            When enabled, conversation transcripts will be automatically sent to the Parser Tool for analysis.
-        </p>
-        <?php
-    }
-    
     public function sanitize_settings($input) {
         $sanitized = array();
         
@@ -565,17 +505,6 @@ class AnamAdminSettings {
             $sanitized['selected_pages'] = array();
         }
         
-        // Parser Tool Integration Settings
-        if (isset($input['parser_tool_url'])) {
-            $sanitized['parser_tool_url'] = sanitize_url($input['parser_tool_url']);
-        }
-        
-        if (isset($input['enable_transcript_processing'])) {
-            $sanitized['enable_transcript_processing'] = (bool) $input['enable_transcript_processing'];
-        } else {
-            $sanitized['enable_transcript_processing'] = false;
-        }
-        
         // Legacy fields for backward compatibility (will be migrated)
         if (isset($input['target_pages'])) {
             $sanitized['target_pages'] = sanitize_text_field($input['target_pages']);
@@ -633,24 +562,10 @@ class AnamAdminSettings {
         </div>
         <?php endif; ?>
 
-        <!-- Hidden iframe for parser tool communication -->
-        <?php 
-        $options = get_option($this->option_name, array());
-        $parser_url = isset($options['parser_tool_url']) ? $options['parser_tool_url'] : '';
-        $transcript_enabled = isset($options['enable_transcript_processing']) ? $options['enable_transcript_processing'] : false;
-        
-        if (!empty($parser_url) && $transcript_enabled): ?>
-        <iframe id="anam-parser-iframe" 
-                src="<?php echo esc_url($parser_url); ?>" 
-                style="display: none; width: 0; height: 0; border: none;"
-                title="Anam Parser Tool">
-        </iframe>
-        <?php endif; ?>
-
         <script type="module">
         console.log('🎯 Anam Avatar - Starting...');
         
-        import { createClient, AnamEvent } from "https://esm.sh/@anam-ai/js-sdk@3.5.1/es2022/js-sdk.mjs";
+        import { createClient } from "https://esm.sh/@anam-ai/js-sdk@3.5.1/es2022/js-sdk.mjs";
         
         const ANAM_CONFIG = {
             ajaxUrl: '<?php echo admin_url('admin-ajax.php'); ?>',
@@ -661,93 +576,6 @@ class AnamAdminSettings {
         };
         
         let anamClient = null;
-        let conversationTranscript = [];
-        
-        // Listen for messages from parser tool
-        window.addEventListener('message', function(event) {
-            // Security: Only accept messages from our deployed parser tool
-            if (event.origin !== 'https://key-value-pair-parser-536436917683.us-west1.run.app') return;
-            
-            if (event.data && event.data.type === 'parser-result') {
-                console.log('📊 Parser tool result received:', event.data);
-                // Handle parser results here if needed
-            }
-        });
-        
-        // Function to send transcript to parser tool via iframe
-        function sendTranscriptToParser(transcript) {
-            if (!transcript || transcript.length === 0) {
-                console.log('📝 No transcript to send to parser');
-                return;
-            }
-            
-            try {
-                console.log('🔧 Sending transcript to parser tool...');
-                
-                // Convert transcript to plain text
-                const plainText = transcript.map(msg => {
-                    const role = msg.role === 'user' ? 'User' : 'Assistant';
-                    return `${role}: ${msg.content}`;
-                }).join('\n\n');
-                
-                // Get parser iframe
-                const parserIframe = document.getElementById('anam-parser-iframe');
-                if (!parserIframe) {
-                    console.error('❌ Parser iframe not found');
-                    return;
-                }
-                
-                // Send transcript to parser tool
-                const targetWindow = parserIframe.contentWindow;
-                targetWindow.postMessage({
-                    type: 'process-transcript',
-                    transcript: plainText
-                }, 'https://key-value-pair-parser-536436917683.us-west1.run.app');
-                
-                console.log('✅ Transcript sent to parser tool');
-                
-            } catch (error) {
-                console.error('❌ Failed to send transcript to parser:', error);
-            }
-        }
-        
-        // Function to send transcript to server for storage
-        async function sendTranscriptToServer(transcript) {
-            if (!transcript || transcript.length === 0) {
-                console.log('📝 No transcript to send to server');
-                return;
-            }
-            
-            try {
-                console.log('📤 Storing transcript on server...');
-                
-                const response = await fetch(ANAM_CONFIG.ajaxUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({
-                        action: 'anam_process_transcript',
-                        nonce: ANAM_CONFIG.nonce,
-                        transcript: JSON.stringify(transcript),
-                        timestamp: new Date().toISOString(),
-                        page_url: window.location.href
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    console.log('✅ Transcript stored on server:', data.data);
-                } else {
-                    console.error('❌ Server storage error:', data.data);
-                }
-            } catch (error) {
-                console.error('❌ Failed to store transcript on server:', error);
-            }
-        }
         
         // Handle widget button interactions
         if (ANAM_CONFIG.displayMethod === 'page_position') {
@@ -843,12 +671,6 @@ class AnamAdminSettings {
                 updateStatus('🔧 Creating client...');
                 anamClient = createClient(sessionToken);
                 console.log('✅ Client created:', anamClient);
-                
-                // Add transcript capture event listener
-                anamClient.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages) => {
-                    conversationTranscript = messages;
-                    console.log('📝 Transcript updated:', messages.length, 'messages');
-                });
                 
                 updateStatus('📹 Starting stream...');
                 
@@ -1026,17 +848,6 @@ class AnamAdminSettings {
             console.log('🚫 Closing Element ID avatar completely...');
             
             try {
-                // Process transcript before stopping stream
-                if (conversationTranscript.length > 0) {
-                    // Send to parser tool immediately (client-side)
-                    sendTranscriptToParser(conversationTranscript);
-                    
-                    // Also store on server for backup/analysis
-                    await sendTranscriptToServer(conversationTranscript);
-                    
-                    conversationTranscript = []; // Clear transcript after sending
-                }
-                
                 // Stop streaming if client exists
                 if (anamClient) {
                     console.log('🛑 Stopping avatar stream...');
@@ -1044,7 +855,7 @@ class AnamAdminSettings {
                     console.log('✅ Stream stopped');
                 }
             } catch (error) {
-                console.error('❌ Error during close:', error);
+                console.error('❌ Error stopping stream:', error);
             }
             
             // Remove modal if it exists
@@ -1212,17 +1023,6 @@ class AnamAdminSettings {
             console.log('🚫 Closing avatar completely...');
             
             try {
-                // Process transcript before stopping stream
-                if (conversationTranscript.length > 0) {
-                    // Send to parser tool immediately (client-side)
-                    sendTranscriptToParser(conversationTranscript);
-                    
-                    // Also store on server for backup/analysis
-                    await sendTranscriptToServer(conversationTranscript);
-                    
-                    conversationTranscript = []; // Clear transcript after sending
-                }
-                
                 // Stop streaming if client exists
                 if (anamClient) {
                     console.log('🛑 Stopping avatar stream...');
@@ -1230,7 +1030,7 @@ class AnamAdminSettings {
                     console.log('✅ Stream stopped');
                 }
             } catch (error) {
-                console.error('❌ Error during close:', error);
+                console.error('❌ Error stopping stream:', error);
             }
             
             // Remove modal if it exists
@@ -1317,12 +1117,6 @@ class AnamAdminSettings {
                 updateStatus('🔧 Creating client...');
                 anamClient = createClient(sessionToken);
                 console.log('✅ Client created:', anamClient);
-                
-                // Add transcript capture event listener
-                anamClient.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages) => {
-                    conversationTranscript = messages;
-                    console.log('📝 Transcript updated:', messages.length, 'messages');
-                });
                 
                 updateStatus('📹 Starting stream...');
                 

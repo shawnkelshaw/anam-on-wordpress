@@ -127,45 +127,43 @@ class AnamTranscriptHandler {
         }
         
         // Create database table if it doesn't exist
-        $this->maybe_create_table();
+        $this->create_table();
         
         error_log('Anam Transcript: Successfully initialized');
     }
     
     /**
-     * Maybe create the conversations table
-     * Only creates if it doesn't exist
+     * Create database table for storing conversations
      */
-    private function maybe_create_table() {
+    public function create_table() {
         global $wpdb;
         
-        $table_name = $this->table_name;
-        
-        // Check if table already exists
-        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name)) === $table_name;
+        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $this->table_name)) === $this->table_name;
         
         if ($table_exists) {
-            error_log('Anam Transcript: Table already exists, skipping creation');
+            error_log('Anam Transcript: Table exists, checking for migration...');
+            $this->migrate_table_if_needed();
             return;
         }
         
         // Create table with proper WordPress method
         $charset_collate = $wpdb->get_charset_collate();
         
-        $sql = "CREATE TABLE $table_name (
+        $sql = "CREATE TABLE {$this->table_name} (
             id mediumint(9) NOT NULL AUTO_INCREMENT,
-            transcript_raw longtext NOT NULL,
-            transcript_plain longtext NOT NULL,
-            timestamp datetime DEFAULT CURRENT_TIMESTAMP,
+            session_id varchar(100) NOT NULL,
             page_url varchar(500) DEFAULT '',
+            timestamp datetime DEFAULT CURRENT_TIMESTAMP,
             status varchar(20) DEFAULT 'pending',
-            parser_results longtext DEFAULT NULL,
+            metadata longtext DEFAULT NULL,
             error_message text DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             processed_at datetime DEFAULT NULL,
             PRIMARY KEY (id),
+            UNIQUE KEY session_id (session_id),
             KEY status (status),
-            KEY created_at (created_at)
+            KEY created_at (created_at),
+            KEY page_url (page_url)
         ) $charset_collate;";
         
         // Include WordPress upgrade functions
@@ -181,6 +179,60 @@ class AnamTranscriptHandler {
             update_option('anam_transcript_table_version', '1.0.0');
         } else {
             error_log('Anam Transcript: Failed to create database table');
+        }
+    }
+    
+    /**
+     * Migrate existing table structure to new session ID format
+     * NOTE: This migration is designed for the new session-based approach
+     * where transcripts are fetched from Anam.ai API on-demand, not stored locally
+     */
+    public function migrate_table_if_needed() {
+        global $wpdb;
+        
+        // Check if session_id column exists
+        $columns = $wpdb->get_results("SHOW COLUMNS FROM {$this->table_name} LIKE 'session_id'");
+        
+        if (empty($columns)) {
+            error_log('Anam Transcript: Starting table migration to session ID format...');
+            
+            // Check if old columns exist before dropping
+            $has_old_columns = $wpdb->get_results("SHOW COLUMNS FROM {$this->table_name} WHERE Field IN ('transcript_raw', 'transcript_plain', 'parser_results')");
+            
+            // Add new columns
+            $wpdb->query("ALTER TABLE {$this->table_name} 
+                ADD COLUMN session_id varchar(100) DEFAULT NULL AFTER id,
+                ADD COLUMN metadata longtext DEFAULT NULL AFTER status");
+            
+            // Add indexes
+            $wpdb->query("ALTER TABLE {$this->table_name} 
+                ADD UNIQUE KEY session_id (session_id),
+                ADD KEY page_url (page_url)");
+            
+            // Only drop old columns if they exist and table is empty or user confirms
+            if (!empty($has_old_columns)) {
+                $row_count = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+                
+                if ($row_count == 0) {
+                    // Safe to drop - table is empty
+                    $wpdb->query("ALTER TABLE {$this->table_name} 
+                        DROP COLUMN IF EXISTS transcript_raw,
+                        DROP COLUMN IF EXISTS transcript_plain,
+                        DROP COLUMN IF EXISTS parser_results");
+                    error_log('Anam Transcript: Dropped old transcript columns (table was empty)');
+                } else {
+                    // Table has data - log warning but don't drop
+                    error_log('Anam Transcript: WARNING - Table has ' . $row_count . ' rows. Old columns NOT dropped to preserve data.');
+                    error_log('Anam Transcript: Manual intervention may be required. Old columns: transcript_raw, transcript_plain, parser_results');
+                }
+            }
+            
+            error_log('Anam Transcript: Table migration completed');
+            
+            // Update version flag
+            update_option('anam_transcript_version', '2.0');
+        } else {
+            error_log('Anam Transcript: Table already migrated');
         }
     }
     
@@ -316,10 +368,10 @@ class AnamTranscriptHandler {
     }
     
     /**
-     * Handle transcript processing AJAX request
+     * Handle session processing AJAX request
      */
     public function handle_transcript_processing() {
-        error_log('Anam Transcript: AJAX handler called');
+        error_log('Anam Transcript: Session processing AJAX handler called');
         
         // Security check
         if (!wp_verify_nonce($_POST['nonce'], 'anam_session')) {
@@ -329,42 +381,42 @@ class AnamTranscriptHandler {
         }
         
         // Validate required data
-        if (empty($_POST['transcript'])) {
-            error_log('Anam Transcript: No transcript data provided');
-            wp_send_json_error('No transcript data provided');
+        if (empty($_POST['session_id'])) {
+            error_log('Anam Transcript: No session ID provided');
+            wp_send_json_error('No session ID provided');
             return;
         }
         
-        $transcript_json = wp_unslash($_POST['transcript']); // Don't sanitize JSON yet
+        $session_id = sanitize_text_field($_POST['session_id']);
         $timestamp = sanitize_text_field($_POST['timestamp'] ?? '');
         $page_url = sanitize_url($_POST['page_url'] ?? '');
+        $metadata = $_POST['metadata'] ?? '';
         
-        error_log('Anam Transcript: Received data - JSON length: ' . strlen($transcript_json));
-        
-        // Decode and validate transcript
-        $transcript_data = json_decode($transcript_json, true);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            error_log('Anam Transcript: JSON decode error: ' . json_last_error_msg());
-            wp_send_json_error('Invalid transcript format: ' . json_last_error_msg());
-            return;
+        // Sanitize metadata if provided
+        if (!empty($metadata)) {
+            $metadata = wp_unslash($metadata);
+            $metadata_decoded = json_decode($metadata, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                error_log('Anam Transcript: Invalid metadata JSON: ' . json_last_error_msg());
+                $metadata = null;
+            } else {
+                $metadata = json_encode($metadata_decoded); // Re-encode for safety
+            }
         }
         
-        error_log('Anam Transcript: Successfully decoded JSON with ' . count($transcript_data) . ' messages');
+        error_log('Anam Transcript: Received session ID: ' . $session_id);
         
-        // Convert to plain text for easier processing
-        $plain_text = $this->convert_transcript_to_plain_text($transcript_data);
-        
-        // Store in database
+        // Store session data in database
         global $wpdb;
         
         $result = $wpdb->insert(
             $this->table_name,
             array(
-                'transcript_raw' => $transcript_json,
-                'transcript_plain' => $plain_text,
-                'timestamp' => $timestamp ?: current_time('mysql'),
+                'session_id' => $session_id,
                 'page_url' => $page_url,
+                'timestamp' => $timestamp ?: current_time('mysql'),
                 'status' => 'pending',
+                'metadata' => $metadata,
                 'created_at' => current_time('mysql')
             ),
             array('%s', '%s', '%s', '%s', '%s', '%s')
@@ -376,16 +428,17 @@ class AnamTranscriptHandler {
             return;
         }
         
-        error_log('Anam Transcript: Successfully stored transcript with ID: ' . $wpdb->insert_id);
+        error_log('Anam Transcript: Successfully stored session with ID: ' . $wpdb->insert_id);
         
         $conversation_id = $wpdb->insert_id;
         
-        // Schedule background processing
+        // Schedule background processing (parser tool will fetch from Anam.ai API)
         wp_schedule_single_event(time() + 10, 'anam_process_with_parser_tool', array($conversation_id));
         
         wp_send_json_success(array(
-            'message' => 'Transcript received and queued for processing',
-            'conversation_id' => $conversation_id
+            'message' => 'Session ID received and queued for processing',
+            'conversation_id' => $conversation_id,
+            'session_id' => $session_id
         ));
     }
     
@@ -411,6 +464,7 @@ class AnamTranscriptHandler {
     
     /**
      * Process transcript with Parser Tool (background cron job)
+     * NOTE: This function now works with session IDs and fetches transcripts from Anam.ai API
      */
     public function process_with_parser_tool($conversation_id) {
         global $wpdb;
@@ -435,20 +489,50 @@ class AnamTranscriptHandler {
             array('%d')
         );
         
-        // Get Parser Tool URL from options
+        // Get configuration from options
         $options = get_option('anam_options', array());
         $parser_tool_url = isset($options['parser_tool_url']) ? $options['parser_tool_url'] : '';
+        $anam_api_key = isset($options['api_key']) ? $options['api_key'] : '';
         
         if (empty($parser_tool_url)) {
             $this->mark_conversation_error($conversation_id, 'Parser Tool URL not configured');
             return;
         }
         
+        if (empty($anam_api_key)) {
+            $this->mark_conversation_error($conversation_id, 'Anam API key not configured');
+            return;
+        }
+        
+        // Fetch transcript from Anam.ai API using session ID
+        $session_id = $conversation->session_id;
+        $anam_response = wp_remote_get("https://api.anam.ai/v1/sessions/{$session_id}/transcript", array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $anam_api_key,
+                'Content-Type' => 'application/json',
+            ),
+            'timeout' => 30
+        ));
+        
+        if (is_wp_error($anam_response)) {
+            $this->mark_conversation_error($conversation_id, 'Failed to fetch transcript from Anam.ai: ' . $anam_response->get_error_message());
+            return;
+        }
+        
+        $anam_status = wp_remote_retrieve_response_code($anam_response);
+        if ($anam_status !== 200) {
+            $this->mark_conversation_error($conversation_id, 'Anam.ai API returned status: ' . $anam_status);
+            return;
+        }
+        
+        $transcript_data = json_decode(wp_remote_retrieve_body($anam_response), true);
+        
         // Send transcript to Parser Tool
         $response = wp_remote_post($parser_tool_url, array(
             'headers' => array('Content-Type' => 'application/json'),
             'body' => json_encode(array(
-                'transcript' => $conversation->transcript_plain,
+                'sessionId' => $session_id,
+                'transcriptData' => $transcript_data,
                 'conversation_id' => $conversation_id,
                 'page_url' => $conversation->page_url,
                 'timestamp' => $conversation->timestamp
@@ -465,20 +549,19 @@ class AnamTranscriptHandler {
         $response_body = wp_remote_retrieve_body($response);
         
         if ($response_code === 200) {
-            // Success - store results
+            // Success - update status
             $wpdb->update(
                 $this->table_name,
                 array(
                     'status' => 'completed',
-                    'parser_results' => $response_body,
                     'processed_at' => current_time('mysql')
                 ),
                 array('id' => $conversation_id),
-                array('%s', '%s', '%s'),
+                array('%s', '%s'),
                 array('%d')
             );
             
-            error_log("Anam: Successfully processed conversation $conversation_id");
+            error_log("Anam: Successfully processed conversation $conversation_id with session $session_id");
         } else {
             $this->mark_conversation_error($conversation_id, "Parser Tool returned error $response_code: $response_body");
         }

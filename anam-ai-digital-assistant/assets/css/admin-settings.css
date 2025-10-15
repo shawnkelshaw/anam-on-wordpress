@@ -1,0 +1,12 @@
+.anam-ai-da-settings .form-table th {
+    width: 200px;
+}
+
+.anam-ai-da-settings #anam-ai-save[disabled] {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.anam-ai-da-settings .anam-ai-button-gap {
+    margin-right: 8px;
+}
