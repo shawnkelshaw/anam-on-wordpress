@@ -26,9 +26,10 @@ if (!defined('ANAM_TRANSCRIPT_FEATURE')) {
  */
 class AnamTranscriptHandler {
     
-    private $version = '1.0.0';
+    private $version = '2.0.0';
     private $table_name;
     private $feature_enabled = false;
+    private $db_version = '2.0';
     
     public function __construct() {
         // Early exit if feature is disabled
@@ -159,9 +160,19 @@ class AnamTranscriptHandler {
             error_message text DEFAULT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             processed_at datetime DEFAULT NULL,
+            parsed_data longtext DEFAULT NULL,
+            review_status varchar(20) DEFAULT 'pending',
+            reviewed_by bigint(20) DEFAULT NULL,
+            reviewed_at datetime DEFAULT NULL,
+            supabase_id varchar(100) DEFAULT NULL,
+            supabase_sent_at datetime DEFAULT NULL,
+            email_sent tinyint(1) DEFAULT 0,
+            email_sent_at datetime DEFAULT NULL,
+            transcript_raw longtext DEFAULT NULL,
             PRIMARY KEY (id),
             UNIQUE KEY session_id (session_id),
             KEY status (status),
+            KEY review_status (review_status),
             KEY created_at (created_at),
             KEY page_url (page_url)
         ) $charset_collate;";
@@ -176,64 +187,84 @@ class AnamTranscriptHandler {
         
         if ($result) {
             error_log('Anam Transcript: Database table created successfully');
-            update_option('anam_transcript_table_version', '1.0.0');
+            update_option('anam_transcript_table_version', '2.0.0');
+            update_option('anam_db_version', '2.0');
         } else {
             error_log('Anam Transcript: Failed to create database table');
         }
     }
     
     /**
-     * Migrate existing table structure to new session ID format
-     * NOTE: This migration is designed for the new session-based approach
-     * where transcripts are fetched from Anam.ai API on-demand, not stored locally
+     * Migrate existing table structure to new format with review workflow
+     * Adds columns for parsed data, review status, and Supabase integration
      */
     public function migrate_table_if_needed() {
         global $wpdb;
         
-        // Check if session_id column exists
-        $columns = $wpdb->get_results("SHOW COLUMNS FROM {$this->table_name} LIKE 'session_id'");
+        $current_db_version = get_option('anam_db_version', '1.0');
         
-        if (empty($columns)) {
-            error_log('Anam Transcript: Starting table migration to session ID format...');
+        // Migration to v2.0 - Add review workflow columns
+        if (version_compare($current_db_version, '2.0', '<')) {
+            error_log('Anam Transcript: Starting migration to v2.0 (review workflow)...');
             
-            // Check if old columns exist before dropping
-            $has_old_columns = $wpdb->get_results("SHOW COLUMNS FROM {$this->table_name} WHERE Field IN ('transcript_raw', 'transcript_plain', 'parser_results')");
+            // Check which columns need to be added
+            $existing_columns = $wpdb->get_col("SHOW COLUMNS FROM {$this->table_name}");
             
-            // Add new columns
-            $wpdb->query("ALTER TABLE {$this->table_name} 
-                ADD COLUMN session_id varchar(100) DEFAULT NULL AFTER id,
-                ADD COLUMN metadata longtext DEFAULT NULL AFTER status");
+            $columns_to_add = array();
             
-            // Add indexes
-            $wpdb->query("ALTER TABLE {$this->table_name} 
-                ADD UNIQUE KEY session_id (session_id),
-                ADD KEY page_url (page_url)");
+            if (!in_array('parsed_data', $existing_columns)) {
+                $columns_to_add[] = 'ADD COLUMN parsed_data longtext DEFAULT NULL';
+            }
+            if (!in_array('review_status', $existing_columns)) {
+                $columns_to_add[] = 'ADD COLUMN review_status varchar(20) DEFAULT \'pending\'';
+            }
+            if (!in_array('reviewed_by', $existing_columns)) {
+                $columns_to_add[] = 'ADD COLUMN reviewed_by bigint(20) DEFAULT NULL';
+            }
+            if (!in_array('reviewed_at', $existing_columns)) {
+                $columns_to_add[] = 'ADD COLUMN reviewed_at datetime DEFAULT NULL';
+            }
+            if (!in_array('supabase_id', $existing_columns)) {
+                $columns_to_add[] = 'ADD COLUMN supabase_id varchar(100) DEFAULT NULL';
+            }
+            if (!in_array('supabase_sent_at', $existing_columns)) {
+                $columns_to_add[] = 'ADD COLUMN supabase_sent_at datetime DEFAULT NULL';
+            }
+            if (!in_array('email_sent', $existing_columns)) {
+                $columns_to_add[] = 'ADD COLUMN email_sent tinyint(1) DEFAULT 0';
+            }
+            if (!in_array('email_sent_at', $existing_columns)) {
+                $columns_to_add[] = 'ADD COLUMN email_sent_at datetime DEFAULT NULL';
+            }
+            if (!in_array('transcript_raw', $existing_columns)) {
+                $columns_to_add[] = 'ADD COLUMN transcript_raw longtext DEFAULT NULL';
+            }
             
-            // Only drop old columns if they exist and table is empty or user confirms
-            if (!empty($has_old_columns)) {
-                $row_count = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name}");
+            // Add columns if needed
+            if (!empty($columns_to_add)) {
+                $alter_sql = "ALTER TABLE {$this->table_name} " . implode(', ', $columns_to_add);
+                $result = $wpdb->query($alter_sql);
                 
-                if ($row_count == 0) {
-                    // Safe to drop - table is empty
-                    $wpdb->query("ALTER TABLE {$this->table_name} 
-                        DROP COLUMN IF EXISTS transcript_raw,
-                        DROP COLUMN IF EXISTS transcript_plain,
-                        DROP COLUMN IF EXISTS parser_results");
-                    error_log('Anam Transcript: Dropped old transcript columns (table was empty)');
+                if ($result !== false) {
+                    error_log('Anam Transcript: Added ' . count($columns_to_add) . ' new columns');
                 } else {
-                    // Table has data - log warning but don't drop
-                    error_log('Anam Transcript: WARNING - Table has ' . $row_count . ' rows. Old columns NOT dropped to preserve data.');
-                    error_log('Anam Transcript: Manual intervention may be required. Old columns: transcript_raw, transcript_plain, parser_results');
+                    error_log('Anam Transcript: Failed to add columns: ' . $wpdb->last_error);
+                    return false;
                 }
             }
             
-            error_log('Anam Transcript: Table migration completed');
+            // Add index for review_status if it doesn't exist
+            $indexes = $wpdb->get_results("SHOW INDEX FROM {$this->table_name} WHERE Key_name = 'review_status'");
+            if (empty($indexes)) {
+                $wpdb->query("ALTER TABLE {$this->table_name} ADD KEY review_status (review_status)");
+            }
             
-            // Update version flag
-            update_option('anam_transcript_version', '2.0');
-        } else {
-            error_log('Anam Transcript: Table already migrated');
+            // Update version
+            update_option('anam_db_version', '2.0');
+            error_log('Anam Transcript: Migration to v2.0 completed successfully');
         }
+        
+        return true;
     }
     
     /**
@@ -463,6 +494,145 @@ class AnamTranscriptHandler {
     }
     
     /**
+     * Parse vehicle data from transcript text
+     * Extracts: Year, Make, Model, VIN
+     */
+    private function parse_vehicle_data($transcript_text) {
+        $parsed = array(
+            'year' => null,
+            'make' => null,
+            'model' => null,
+            'vin' => null,
+            'confidence' => array()
+        );
+        
+        // Parse VIN (17 characters, alphanumeric, no I, O, Q)
+        if (preg_match('/\b([A-HJ-NPR-Z0-9]{17})\b/i', $transcript_text, $matches)) {
+            $parsed['vin'] = strtoupper($matches[1]);
+            $parsed['confidence']['vin'] = 'high';
+        }
+        
+        // Parse Year (1900-2099)
+        if (preg_match('/\b(19\d{2}|20\d{2})\b/', $transcript_text, $matches)) {
+            $parsed['year'] = $matches[1];
+            $parsed['confidence']['year'] = 'high';
+        }
+        
+        // Parse Make (common vehicle manufacturers)
+        $makes = array(
+            'Toyota', 'Honda', 'Ford', 'Chevrolet', 'Chevy', 'Nissan', 'BMW', 'Mercedes', 'Audi',
+            'Volkswagen', 'VW', 'Hyundai', 'Kia', 'Mazda', 'Subaru', 'Jeep', 'Ram', 'Dodge',
+            'Chrysler', 'Buick', 'GMC', 'Cadillac', 'Lexus', 'Acura', 'Infiniti', 'Tesla',
+            'Volvo', 'Porsche', 'Land Rover', 'Jaguar', 'Mini', 'Fiat', 'Alfa Romeo'
+        );
+        
+        foreach ($makes as $make) {
+            if (preg_match('/\b' . preg_quote($make, '/') . '\b/i', $transcript_text, $matches)) {
+                $parsed['make'] = $matches[0];
+                $parsed['confidence']['make'] = 'medium';
+                break;
+            }
+        }
+        
+        // Parse Model (extract word after make, or common patterns)
+        if ($parsed['make']) {
+            // Try to find model after make mention
+            $pattern = '/\b' . preg_quote($parsed['make'], '/') . '\s+([A-Za-z0-9-]+(?:\s+[A-Za-z0-9-]+)?)/i';
+            if (preg_match($pattern, $transcript_text, $matches)) {
+                $parsed['model'] = trim($matches[1]);
+                $parsed['confidence']['model'] = 'medium';
+            }
+        }
+        
+        return $parsed;
+    }
+    
+    /**
+     * Send email notification to admin about new session
+     */
+    private function send_email_notification($conversation_id, $parsed_data) {
+        $options = get_option('anam_options', array());
+        $email_enabled = isset($options['email_notifications']) ? $options['email_notifications'] : true;
+        
+        if (!$email_enabled) {
+            error_log('Anam: Email notifications disabled');
+            return false;
+        }
+        
+        global $wpdb;
+        $conversation = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$this->table_name} WHERE id = %d",
+            $conversation_id
+        ));
+        
+        if (!$conversation) {
+            return false;
+        }
+        
+        // Prepare email content
+        $admin_email = get_option('admin_email');
+        $subject = '[Anam] New Vehicle Conversation Ready for Review';
+        
+        $review_url = admin_url('admin.php?page=anam-sessions&action=view&id=' . $conversation_id);
+        
+        $message = "A new vehicle conversation has been captured and is ready for review.\n\n";
+        $message .= "Session ID: {$conversation->session_id}\n";
+        $message .= "Date: " . date('F j, Y g:i A', strtotime($conversation->created_at)) . "\n";
+        $message .= "Page: {$conversation->page_url}\n\n";
+        
+        if (!empty($parsed_data)) {
+            $message .= "Parsed Vehicle Data:\n";
+            $message .= "-------------------\n";
+            if (!empty($parsed_data['year'])) $message .= "Year: {$parsed_data['year']}\n";
+            if (!empty($parsed_data['make'])) $message .= "Make: {$parsed_data['make']}\n";
+            if (!empty($parsed_data['model'])) $message .= "Model: {$parsed_data['model']}\n";
+            if (!empty($parsed_data['vin'])) $message .= "VIN: {$parsed_data['vin']}\n";
+            $message .= "\n";
+        }
+        
+        $message .= "Review and approve this session:\n";
+        $message .= $review_url . "\n\n";
+        $message .= "Or view all pending sessions:\n";
+        $message .= admin_url('admin.php?page=anam-sessions&status=pending') . "\n";
+        
+        // Send email
+        $sent = wp_mail($admin_email, $subject, $message);
+        
+        if ($sent) {
+            // Update email sent status
+            $wpdb->update(
+                $this->table_name,
+                array(
+                    'email_sent' => 1,
+                    'email_sent_at' => current_time('mysql')
+                ),
+                array('id' => $conversation_id),
+                array('%d', '%s'),
+                array('%d')
+            );
+            error_log('Anam: Email notification sent for conversation ' . $conversation_id);
+        } else {
+            error_log('Anam: Failed to send email notification for conversation ' . $conversation_id);
+            // Create admin notice as fallback
+            $this->create_admin_notice($conversation_id);
+        }
+        
+        return $sent;
+    }
+    
+    /**
+     * Create admin notice as fallback when email fails
+     */
+    private function create_admin_notice($conversation_id) {
+        $notices = get_option('anam_pending_notices', array());
+        $notices[] = array(
+            'conversation_id' => $conversation_id,
+            'created_at' => current_time('mysql')
+        );
+        update_option('anam_pending_notices', $notices);
+    }
+    
+    /**
      * Process transcript with Parser Tool (background cron job)
      * NOTE: This function now works with session IDs and fetches transcripts from Anam.ai API
      */
@@ -527,44 +697,76 @@ class AnamTranscriptHandler {
         
         $transcript_data = json_decode(wp_remote_retrieve_body($anam_response), true);
         
-        // Send transcript to Parser Tool
-        $response = wp_remote_post($parser_tool_url, array(
-            'headers' => array('Content-Type' => 'application/json'),
-            'body' => json_encode(array(
-                'sessionId' => $session_id,
-                'transcriptData' => $transcript_data,
-                'conversation_id' => $conversation_id,
-                'page_url' => $conversation->page_url,
-                'timestamp' => $conversation->timestamp
-            )),
-            'timeout' => 30
-        ));
+        // Store raw transcript
+        $wpdb->update(
+            $this->table_name,
+            array('transcript_raw' => json_encode($transcript_data)),
+            array('id' => $conversation_id),
+            array('%s'),
+            array('%d')
+        );
         
-        if (is_wp_error($response)) {
-            $this->mark_conversation_error($conversation_id, 'Parser Tool request failed: ' . $response->get_error_message());
-            return;
-        }
+        // Parse vehicle data from transcript
+        $transcript_text = $this->convert_transcript_to_plain_text($transcript_data);
+        $parsed_data = $this->parse_vehicle_data($transcript_text);
         
-        $response_code = wp_remote_retrieve_response_code($response);
-        $response_body = wp_remote_retrieve_body($response);
+        // Store parsed data
+        $wpdb->update(
+            $this->table_name,
+            array(
+                'parsed_data' => json_encode($parsed_data),
+                'review_status' => 'pending'
+            ),
+            array('id' => $conversation_id),
+            array('%s', '%s'),
+            array('%d')
+        );
         
-        if ($response_code === 200) {
-            // Success - update status
-            $wpdb->update(
-                $this->table_name,
-                array(
-                    'status' => 'completed',
-                    'processed_at' => current_time('mysql')
-                ),
-                array('id' => $conversation_id),
-                array('%s', '%s'),
-                array('%d')
-            );
+        error_log('Anam: Parsed vehicle data for conversation ' . $conversation_id . ': ' . json_encode($parsed_data));
+        
+        // Send email notification
+        $this->send_email_notification($conversation_id, $parsed_data);
+        
+        // Send transcript to Parser Tool (if configured)
+        if (!empty($parser_tool_url)) {
+            $response = wp_remote_post($parser_tool_url, array(
+                'headers' => array('Content-Type' => 'application/json'),
+                'body' => json_encode(array(
+                    'sessionId' => $session_id,
+                    'transcriptData' => $transcript_data,
+                    'parsedData' => $parsed_data,
+                    'conversation_id' => $conversation_id,
+                    'page_url' => $conversation->page_url,
+                    'timestamp' => $conversation->timestamp
+                )),
+                'timeout' => 30
+            ));
             
-            error_log("Anam: Successfully processed conversation $conversation_id with session $session_id");
-        } else {
-            $this->mark_conversation_error($conversation_id, "Parser Tool returned error $response_code: $response_body");
+            if (is_wp_error($response)) {
+                error_log('Anam: Parser Tool request failed: ' . $response->get_error_message());
+            } else {
+                $response_code = wp_remote_retrieve_response_code($response);
+                if ($response_code === 200) {
+                    error_log('Anam: Parser Tool processed conversation ' . $conversation_id);
+                } else {
+                    error_log('Anam: Parser Tool returned error ' . $response_code);
+                }
+            }
         }
+        
+        // Mark as completed (parsing done, awaiting review)
+        $wpdb->update(
+            $this->table_name,
+            array(
+                'status' => 'completed',
+                'processed_at' => current_time('mysql')
+            ),
+            array('id' => $conversation_id),
+            array('%s', '%s'),
+            array('%d')
+        );
+        
+        error_log("Anam: Successfully processed conversation $conversation_id with session $session_id");
     }
     
     /**
@@ -611,10 +813,115 @@ class AnamTranscriptHandler {
             'wordpress_ready' => $this->is_wordpress_ready(),
             'requirements_met' => $this->check_requirements(),
             'initialized' => $this->feature_enabled,
-            'version' => $this->version
+            'version' => $this->version,
+            'db_version' => get_option('anam_db_version', '1.0')
         );
+    }
+    
+    /**
+     * Send data to Supabase
+     */
+    public function send_to_supabase($conversation_id) {
+        global $wpdb;
+        
+        // Get conversation
+        $conversation = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$this->table_name} WHERE id = %d",
+            $conversation_id
+        ));
+        
+        if (!$conversation) {
+            return array('success' => false, 'message' => 'Conversation not found');
+        }
+        
+        // Check if already sent
+        if (!empty($conversation->supabase_id)) {
+            return array('success' => false, 'message' => 'Already sent to Supabase');
+        }
+        
+        // Get Supabase configuration
+        $options = get_option('anam_options', array());
+        $supabase_url = isset($options['supabase_url']) ? $options['supabase_url'] : '';
+        $supabase_key = isset($options['supabase_key']) ? $options['supabase_key'] : '';
+        $supabase_table = isset($options['supabase_table']) ? $options['supabase_table'] : 'vehicle_conversations';
+        
+        if (empty($supabase_url) || empty($supabase_key)) {
+            return array('success' => false, 'message' => 'Supabase not configured');
+        }
+        
+        // Parse data
+        $parsed_data = json_decode($conversation->parsed_data, true);
+        
+        // Prepare payload
+        $payload = array(
+            'session_id' => $conversation->session_id,
+            'year' => $parsed_data['year'] ?? null,
+            'make' => $parsed_data['make'] ?? null,
+            'model' => $parsed_data['model'] ?? null,
+            'vin' => $parsed_data['vin'] ?? null,
+            'page_url' => $conversation->page_url,
+            'conversation_date' => $conversation->created_at,
+            'processed_at' => current_time('mysql')
+        );
+        
+        // Send to Supabase
+        $response = wp_remote_post(
+            rtrim($supabase_url, '/') . '/rest/v1/' . $supabase_table,
+            array(
+                'headers' => array(
+                    'apikey' => $supabase_key,
+                    'Authorization' => 'Bearer ' . $supabase_key,
+                    'Content-Type' => 'application/json',
+                    'Prefer' => 'return=representation'
+                ),
+                'body' => json_encode($payload),
+                'timeout' => 30
+            )
+        );
+        
+        if (is_wp_error($response)) {
+            return array('success' => false, 'message' => 'Request failed: ' . $response->get_error_message());
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        
+        if ($response_code === 201) {
+            // Success - extract Supabase ID from response
+            $response_data = json_decode($response_body, true);
+            $supabase_id = isset($response_data[0]['id']) ? $response_data[0]['id'] : 'unknown';
+            
+            // Update conversation
+            $wpdb->update(
+                $this->table_name,
+                array(
+                    'supabase_id' => $supabase_id,
+                    'supabase_sent_at' => current_time('mysql'),
+                    'review_status' => 'sent',
+                    'reviewed_by' => get_current_user_id(),
+                    'reviewed_at' => current_time('mysql')
+                ),
+                array('id' => $conversation_id),
+                array('%s', '%s', '%s', '%d', '%s'),
+                array('%d')
+            );
+            
+            error_log('Anam: Successfully sent conversation ' . $conversation_id . ' to Supabase');
+            return array('success' => true, 'message' => 'Sent to Supabase', 'supabase_id' => $supabase_id);
+        } else {
+            error_log('Anam: Supabase error ' . $response_code . ': ' . $response_body);
+            return array('success' => false, 'message' => 'Supabase error: ' . $response_code);
+        }
     }
 }
 
 // Initialize the transcript handler
-new AnamTranscriptHandler();
+$anam_transcript_handler = new AnamTranscriptHandler();
+
+// Make it globally accessible for admin pages
+if (!function_exists('anam_get_transcript_handler')) {
+    function anam_get_transcript_handler() {
+        global $anam_transcript_handler;
+        return $anam_transcript_handler;
+    }
+}

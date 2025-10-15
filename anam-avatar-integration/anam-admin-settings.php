@@ -15,6 +15,9 @@ if (!defined('ABSPATH')) {
 // Include transcript handler (safe - will self-disable if feature flag is off)
 require_once(plugin_dir_path(__FILE__) . 'anam-transcript-handler.php');
 
+// Include sessions admin page
+require_once(plugin_dir_path(__FILE__) . 'anam-sessions-admin.php');
+
 class AnamAdminSettings {
     
     private $option_group = 'anam_settings';
@@ -38,6 +41,7 @@ class AnamAdminSettings {
         add_action('wp_ajax_nopriv_anam_session_token', array($this, 'handle_session_token'));
         add_action('wp_ajax_anam_verify_api', array($this, 'verify_api_key'));
         add_action('wp_ajax_nopriv_anam_verify_api', array($this, 'verify_api_key'));
+        add_action('wp_ajax_anam_toggle_advanced_sdk', array($this, 'handle_toggle_advanced_sdk'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
     }
     
@@ -64,37 +68,150 @@ class AnamAdminSettings {
     }
     
     public function add_admin_menu() {
-        add_options_page(
-            'Anam.ai Avatar Settings',
+        // Add top-level menu (with Getting Started as default page)
+        add_menu_page(
             'Anam Avatar',
+            'Anam Avatar',
+            'manage_options',
+            'anam-avatar', // Parent slug
+            array($this, 'getting_started_page'),
+            'dashicons-admin-users', // Robot/user icon
+            5 // Position
+        );
+        
+        // Add Getting Started submenu (first in list, same slug as parent)
+        add_submenu_page(
+            'anam-avatar',
+            'Getting Started',
+            'Getting Started',
+            'manage_options',
+            'anam-avatar', // Same as parent - this makes it first
+            array($this, 'getting_started_page')
+        );
+        
+        // Add Avatar Setup submenu (settings)
+        add_submenu_page(
+            'anam-avatar',
+            'Avatar Setup',
+            'Avatar Setup',
             'manage_options',
             'anam-settings',
             array($this, 'admin_page')
         );
+        
+        // Add Display Settings submenu
+        add_submenu_page(
+            'anam-avatar',
+            'Display Settings',
+            'Display Settings',
+            'manage_options',
+            'anam-display-settings',
+            array($this, 'display_settings_page')
+        );
+        
+        // Add Chat Transcripts submenu
+        add_submenu_page(
+            'anam-avatar',
+            'Chat Transcripts',
+            'Chat Transcripts',
+            'manage_options',
+            'anam-sessions',
+            'anam_render_sessions_page'
+        );
+        
+        // Add Database Integration submenu
+        add_submenu_page(
+            'anam-avatar',
+            'Database Integration',
+            'Database Integration',
+            'manage_options',
+            'anam-supabase-config',
+            array($this, 'supabase_config_page')
+        );
+    }
+    
+    /**
+     * Getting Started page
+     */
+    public function getting_started_page() {
+        ?>
+        <div class="wrap">
+            <h1>🚀 Getting Started with Anam Avatar</h1>
+            
+            <div class="notice notice-info">
+                <p><strong>Welcome!</strong> This guide will help you set up your Anam.ai avatar integration.</p>
+            </div>
+            
+            <div style="max-width: 800px; margin-top: 30px;">
+                <h2>Quick Setup Steps</h2>
+                
+                <div style="background: white; padding: 20px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 20px;">
+                    <h3>1️⃣ Avatar Setup</h3>
+                    <p>Set up your Anam.ai API credentials and avatar settings.</p>
+                    <a href="<?php echo admin_url('admin.php?page=anam-settings'); ?>" class="button button-primary">Go to Avatar Setup →</a>
+                </div>
+                
+                <div style="background: white; padding: 20px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 20px;">
+                    <h3>2️⃣ Display Settings</h3>
+                    <p>Configure how and where your avatar appears on your website.</p>
+                    <a href="<?php echo admin_url('admin.php?page=anam-display-settings'); ?>" class="button button-primary">Configure Display →</a>
+                </div>
+                
+                <div style="background: white; padding: 20px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 20px;">
+                    <h3>3️⃣ Chat Transcripts</h3>
+                    <p>View and manage conversation transcripts from your avatar.</p>
+                    <a href="<?php echo admin_url('admin.php?page=anam-sessions'); ?>" class="button button-primary">View Transcripts →</a>
+                </div>
+                
+                <div style="background: white; padding: 20px; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 20px;">
+                    <h3>4️⃣ Database Integration</h3>
+                    <p>Configure Supabase database connection for storing conversation data.</p>
+                    <a href="<?php echo admin_url('admin.php?page=anam-supabase-config'); ?>" class="button button-primary">Configure Database →</a>
+                </div>
+            </div>
+        </div>
+        <?php
     }
     
     public function init_settings() {
         register_setting($this->option_group, $this->option_name, array($this, 'sanitize_settings'));
         
+        // Avatar Configuration Tab
         add_settings_section(
             'anam_api_section',
             'Anam.ai API Configuration',
             array($this, 'api_section_callback'),
-            'anam-settings'
+            'anam-settings-avatar'
         );
         
         add_settings_section(
             'anam_avatar_section',
             'Avatar Configuration',
             array($this, 'avatar_section_callback'),
-            'anam-settings'
+            'anam-settings-avatar'
         );
         
+        // Display Settings Tab
         add_settings_section(
             'anam_display_section',
             'Display Settings',
             array($this, 'display_section_callback'),
-            'anam-settings'
+            'anam-settings-display'
+        );
+        
+        // Supabase Configuration Tab
+        add_settings_section(
+            'anam_supabase_section',
+            'Supabase Integration',
+            array($this, 'supabase_section_callback'),
+            'anam-settings-supabase'
+        );
+        
+        add_settings_section(
+            'anam_notifications_section',
+            'Email Notifications',
+            array($this, 'notifications_section_callback'),
+            'anam-settings-supabase'
         );
         
         // API Settings
@@ -102,7 +219,7 @@ class AnamAdminSettings {
             'api_key',
             'API Key',
             array($this, 'api_key_field'),
-            'anam-settings',
+            'anam-settings-avatar',
             'anam_api_section'
         );
         
@@ -111,7 +228,7 @@ class AnamAdminSettings {
             'persona_id',
             'Persona ID',
             array($this, 'persona_id_field'),
-            'anam-settings',
+            'anam-settings-avatar',
             'anam_avatar_section'
         );
         
@@ -119,7 +236,7 @@ class AnamAdminSettings {
             'avatar_id',
             'Avatar ID',
             array($this, 'avatar_id_field'),
-            'anam-settings',
+            'anam-settings-avatar',
             'anam_avatar_section'
         );
         
@@ -127,7 +244,7 @@ class AnamAdminSettings {
             'voice_id',
             'Voice ID',
             array($this, 'voice_id_field'),
-            'anam-settings',
+            'anam-settings-avatar',
             'anam_avatar_section'
         );
         
@@ -135,7 +252,7 @@ class AnamAdminSettings {
             'llm_id',
             'LLM ID',
             array($this, 'llm_id_field'),
-            'anam-settings',
+            'anam-settings-avatar',
             'anam_avatar_section'
         );
         
@@ -143,7 +260,7 @@ class AnamAdminSettings {
             'system_prompt',
             'System Prompt',
             array($this, 'system_prompt_field'),
-            'anam-settings',
+            'anam-settings-avatar',
             'anam_avatar_section'
         );
         
@@ -152,7 +269,7 @@ class AnamAdminSettings {
             'display_method',
             'Display Method',
             array($this, 'display_method_field'),
-            'anam-settings',
+            'anam-settings-display',
             'anam_display_section'
         );
         
@@ -160,7 +277,7 @@ class AnamAdminSettings {
             'container_id',
             'Element ID',
             array($this, 'container_id_field'),
-            'anam-settings',
+            'anam-settings-display',
             'anam_display_section'
         );
         
@@ -168,7 +285,7 @@ class AnamAdminSettings {
             'avatar_position',
             'Avatar Position',
             array($this, 'avatar_position_field'),
-            'anam-settings',
+            'anam-settings-display',
             'anam_display_section'
         );
         
@@ -176,8 +293,50 @@ class AnamAdminSettings {
             'page_selection',
             'Show Avatar On',
             array($this, 'page_selection_field'),
-            'anam-settings',
+            'anam-settings-display',
             'anam_display_section'
+        );
+        
+        // Supabase Settings
+        add_settings_field(
+            'supabase_enabled',
+            'Enable Supabase Integration',
+            array($this, 'supabase_enabled_field'),
+            'anam-settings-supabase',
+            'anam_supabase_section'
+        );
+        
+        add_settings_field(
+            'supabase_url',
+            'Supabase URL',
+            array($this, 'supabase_url_field'),
+            'anam-settings-supabase',
+            'anam_supabase_section'
+        );
+        
+        add_settings_field(
+            'supabase_key',
+            'Supabase API Key',
+            array($this, 'supabase_key_field'),
+            'anam-settings-supabase',
+            'anam_supabase_section'
+        );
+        
+        add_settings_field(
+            'supabase_table',
+            'Table Name',
+            array($this, 'supabase_table_field'),
+            'anam-settings-supabase',
+            'anam_supabase_section'
+        );
+        
+        // Email Notification Settings
+        add_settings_field(
+            'email_notifications',
+            'Enable Email Notifications',
+            array($this, 'email_notifications_field'),
+            'anam-settings-supabase',
+            'anam_notifications_section'
         );
         
     }
@@ -186,7 +345,7 @@ class AnamAdminSettings {
         $options = get_option($this->option_name, array());
         ?>
         <div class="wrap">
-            <h1>🤖 Anam.ai Avatar Settings</h1>
+            <h1>🤖 Avatar Setup</h1>
             
             <div class="notice notice-info">
                 <p><strong>Getting Started:</strong> Configure your Anam.ai credentials below. You can find these values in your <a href="https://app.anam.ai" target="_blank">Anam.ai dashboard</a>.</p>
@@ -201,11 +360,11 @@ class AnamAdminSettings {
             <form method="post" action="options.php" id="anam-settings-form">
                 <?php
                 settings_fields($this->option_group);
-                do_settings_sections('anam-settings');
+                do_settings_sections('anam-settings-avatar');
                 ?>
                 <p class="submit">
-                    <button type="button" id="anam-reset-all" class="button button-secondary" style="margin-right: 10px;" disabled>Reset All</button>
-                    <input type="submit" name="submit" id="anam-save-settings" class="button button-primary" value="Save Settings" disabled>
+                    <button type="button" id="anam-reset-all" class="button button-secondary" style="margin-right: 10px;">Reset All</button>
+                    <input type="submit" name="submit" id="anam-save-settings" class="button button-primary" value="Save Settings">
                 </p>
             </form>
             
@@ -256,6 +415,60 @@ class AnamAdminSettings {
         <?php
     }
     
+    public function display_settings_page() {
+        $options = get_option($this->option_name, array());
+        ?>
+        <div class="wrap">
+            <h1>📺 Display Settings</h1>
+            
+            <div class="notice notice-info">
+                <p><strong>Configure how and where your avatar appears</strong> on your website.</p>
+            </div>
+            
+            <?php if (isset($_GET['settings-updated']) && $_GET['settings-updated']): ?>
+                <div class="notice notice-success is-dismissible">
+                    <p>Display settings saved successfully! 🎉</p>
+                </div>
+            <?php endif; ?>
+            
+            <form method="post" action="options.php" id="anam-display-form">
+                <?php
+                settings_fields($this->option_group);
+                do_settings_sections('anam-settings-display');
+                submit_button('Save Display Settings');
+                ?>
+            </form>
+        </div>
+        <?php
+    }
+    
+    public function supabase_config_page() {
+        $options = get_option($this->option_name, array());
+        ?>
+        <div class="wrap">
+            <h1>🗄️ Database Integration</h1>
+            
+            <div class="notice notice-info">
+                <p><strong>Configure Supabase integration</strong> for storing parsed vehicle data. <a href="?page=anam-sessions">View Sessions →</a></p>
+            </div>
+            
+            <?php if (isset($_GET['settings-updated']) && $_GET['settings-updated']): ?>
+                <div class="notice notice-success is-dismissible">
+                    <p>Supabase settings saved successfully! 🎉</p>
+                </div>
+            <?php endif; ?>
+            
+            <form method="post" action="options.php" id="anam-supabase-form">
+                <?php
+                settings_fields($this->option_group);
+                do_settings_sections('anam-settings-supabase');
+                submit_button('Save Supabase Settings');
+                ?>
+            </form>
+        </div>
+        <?php
+    }
+    
     public function api_section_callback() {
         echo '<p>Enter your Anam.ai API credentials. These are required for the avatar to function.</p>';
     }
@@ -268,15 +481,26 @@ class AnamAdminSettings {
         echo '<p>Control where and how your avatar appears on your website.</p>';
     }
     
+    public function supabase_section_callback() {
+        echo '<p>Configure Supabase database connection for storing parsed vehicle data. <a href="?page=anam-sessions">View Sessions →</a></p>';
+    }
+    
+    public function notifications_section_callback() {
+        echo '<p>Configure email notifications for new conversation sessions.</p>';
+    }
+    
     public function api_key_field() {
         $options = get_option($this->option_name, array());
         $value = isset($options['api_key']) ? $options['api_key'] : '';
         $is_verified = get_option('anam_api_verified', false);
         
+        // Only show verified if there's actually an API key saved AND it's verified
+        $show_verified = $is_verified && !empty($value);
+        
         echo '<input type="password" id="anam-api-key" name="' . $this->option_name . '[api_key]" value="' . esc_attr($value) . '" class="regular-text" placeholder="Enter your Anam.ai API key" />';
         echo '<button type="button" id="verify-api-key" class="button button-secondary" style="margin-left: 10px;">Verify API Key</button>';
         
-        if ($is_verified) {
+        if ($show_verified) {
             echo '<span id="api-status" style="margin-left: 10px; color: #46b450;">✅ Verified</span>';
         } else {
             echo '<span id="api-status" style="margin-left: 10px; color: #dc3545;">❌ Not verified</span>';
@@ -451,6 +675,41 @@ class AnamAdminSettings {
         <?php
     }
     
+    public function supabase_enabled_field() {
+        $options = get_option($this->option_name, array());
+        $value = isset($options['supabase_enabled']) ? $options['supabase_enabled'] : false;
+        echo '<label><input type="checkbox" id="supabase-enable" name="' . $this->option_name . '[supabase_enabled]" value="1" ' . checked($value, true, false) . ' /> Enable Supabase integration</label>';
+        echo '<p class="description">Turn on to store parsed vehicle data in Supabase</p>';
+    }
+    
+    public function supabase_url_field() {
+        $options = get_option($this->option_name, array());
+        $value = isset($options['supabase_url']) ? $options['supabase_url'] : '';
+        echo '<input type="url" name="' . $this->option_name . '[supabase_url]" value="' . esc_attr($value) . '" class="regular-text supabase-field" placeholder="https://your-project.supabase.co" />';
+        echo '<p class="description">Your Supabase project URL (e.g., https://xxxxx.supabase.co)</p>';
+    }
+    
+    public function supabase_key_field() {
+        $options = get_option($this->option_name, array());
+        $value = isset($options['supabase_key']) ? $options['supabase_key'] : '';
+        echo '<input type="password" name="' . $this->option_name . '[supabase_key]" value="' . esc_attr($value) . '" class="regular-text supabase-field" placeholder="Enter Supabase API key" />';
+        echo '<p class="description">Your Supabase anon or service role key</p>';
+    }
+    
+    public function supabase_table_field() {
+        $options = get_option($this->option_name, array());
+        $value = isset($options['supabase_table']) ? $options['supabase_table'] : '';
+        echo '<input type="text" name="' . $this->option_name . '[supabase_table]" value="' . esc_attr($value) . '" class="regular-text supabase-field" placeholder="vehicle_data" />';
+        echo '<p class="description">Name of the table to store vehicle data (default: vehicle_conversations)</p>';
+    }
+    
+    public function email_notifications_field() {
+        $options = get_option($this->option_name, array());
+        $value = isset($options['email_notifications']) ? $options['email_notifications'] : true;
+        echo '<label><input type="checkbox" name="' . $this->option_name . '[email_notifications]" value="1" ' . checked($value, true, false) . ' /> Send email when new conversation is ready for review</label>';
+        echo '<p class="description">Email will be sent to: ' . get_option('admin_email') . '</p>';
+    }
+    
     public function page_selection_field() {
         $options = get_option($this->option_name, array());
         $selected_pages = isset($options['selected_pages']) ? $options['selected_pages'] : array('homepage');
@@ -508,7 +767,9 @@ class AnamAdminSettings {
     
     
     public function sanitize_settings($input) {
-        $sanitized = array();
+        // Start with existing saved options to preserve data from other pages
+        $existing_options = get_option($this->option_name, array());
+        $sanitized = $existing_options;
         
         if (isset($input['api_key'])) {
             // Don't sanitize API key - it contains special characters like colons and equals
@@ -584,19 +845,52 @@ class AnamAdminSettings {
             $sanitized['custom_slugs'] = sanitize_text_field($input['custom_slugs']);
         }
         
+        // Supabase settings
+        $sanitized['supabase_enabled'] = isset($input['supabase_enabled']) ? true : false;
+        
+        if (isset($input['supabase_url'])) {
+            $sanitized['supabase_url'] = esc_url_raw($input['supabase_url']);
+        }
+        
+        if (isset($input['supabase_key'])) {
+            $sanitized['supabase_key'] = sanitize_text_field($input['supabase_key']);
+        }
+        
+        if (isset($input['supabase_table'])) {
+            $sanitized['supabase_table'] = sanitize_text_field($input['supabase_table']);
+        }
+        
+        // Email notifications
+        $sanitized['email_notifications'] = isset($input['email_notifications']) ? true : false;
+        
+        // Advanced SDK functionality
+        $sanitized['advanced_sdk_enabled'] = isset($input['advanced_sdk_enabled']) ? true : false;
+        
         return $sanitized;
     }
     
     public function enqueue_admin_scripts($hook) {
-        if ($hook !== 'settings_page_anam-settings') {
-            return;
+        // Debug: Log the hook to see what it actually is
+        error_log('Admin hook: ' . $hook);
+        
+        // Enqueue on ALL admin pages for now to test
+        if (strpos($hook, 'anam') !== false || $hook === 'anam-avatar_page_anam-settings' || $hook === 'settings_page_anam-settings') {
+            wp_enqueue_script('anam-admin', plugin_dir_url(__FILE__) . 'anam-admin.js', array('jquery'), '2.0.0', true);
+            wp_localize_script('anam-admin', 'anam_ajax', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('anam_verify_api'),
+                'admin_nonce' => wp_create_nonce('anam_admin_nonce')
+            ));
         }
         
-        wp_enqueue_script('anam-admin', plugin_dir_url(__FILE__) . 'anam-admin.js', array('jquery'), '1.0.0', true);
-        wp_localize_script('anam-admin', 'anam_ajax', array(
-            'ajax_url' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('anam_verify_api')
-        ));
+        // Enqueue on Getting Started page
+        if ($hook === 'toplevel_page_anam-avatar') {
+            wp_enqueue_script('anam-getting-started', plugin_dir_url(__FILE__) . 'anam-getting-started.js', array('jquery'), '1.0.5', true);
+            wp_localize_script('anam-getting-started', 'anam_ajax', array(
+                'ajax_url' => admin_url('admin-ajax.php'),
+                'admin_nonce' => wp_create_nonce('anam_admin_nonce')
+            ));
+        }
     }
     
     public function add_avatar_integration() {
@@ -1779,6 +2073,33 @@ class AnamAdminSettings {
                 'response' => substr($response_body, 0, 200)
             ));
         }
+    }
+    
+    // Handle advanced SDK toggle
+    public function handle_toggle_advanced_sdk() {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'anam_admin_nonce')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        // Get the enabled value - it comes as string 'true' or 'false'
+        $enabled_string = isset($_POST['enabled']) ? $_POST['enabled'] : 'false';
+        $enabled = ($enabled_string === 'true');
+        
+        // Get current options - MUST get fresh copy
+        $options = get_option('anam_options', array());
+        
+        // Set the value
+        $options['advanced_sdk_enabled'] = $enabled;
+        
+        // Delete first to force update
+        delete_option('anam_options');
+        add_option('anam_options', $options);
+        
+        wp_send_json_success(array(
+            'enabled' => $enabled,
+            'message' => $enabled ? 'Advanced SDK enabled' : 'Advanced SDK disabled'
+        ));
     }
     
     // Handle process transcript requests (for session storage)
