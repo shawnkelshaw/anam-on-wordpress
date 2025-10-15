@@ -129,9 +129,27 @@ class AnamSessionsAdmin {
         $pending_count = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name} WHERE review_status = 'pending'");
         $sent_count = $wpdb->get_var("SELECT COUNT(*) FROM {$this->table_name} WHERE review_status = 'sent'");
         
+        // Get email notifications setting
+        $options = get_option('anam_options', array());
+        $email_notifications = isset($options['email_notifications']) ? $options['email_notifications'] : true;
+        
         ?>
         <div class="wrap">
             <h1>Chat Transcripts</h1>
+            
+            <!-- Email Notifications Setting -->
+            <div style="background: #f9f9f9; border: 1px solid #ddd; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                <form method="post" action="options.php">
+                    <?php settings_fields('anam_options'); ?>
+                    <label style="display: flex; align-items: center; gap: 10px;">
+                        <input type="checkbox" name="anam_options[email_notifications]" value="1" <?php checked($email_notifications, true); ?> onchange="this.form.submit()" />
+                        <strong>Send email when new conversation is ready for review</strong>
+                    </label>
+                    <p class="description" style="margin: 8px 0 0 0;">
+                        Email will be sent to: <strong><?php echo esc_html(get_option('admin_email')); ?></strong>
+                    </p>
+                </form>
+            </div>
             
             <div class="anam-filters">
                 <div class="anam-filter-item">

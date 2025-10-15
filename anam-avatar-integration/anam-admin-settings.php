@@ -207,13 +207,6 @@ class AnamAdminSettings {
             'anam-settings-supabase'
         );
         
-        add_settings_section(
-            'anam_notifications_section',
-            'Email Notifications',
-            array($this, 'notifications_section_callback'),
-            'anam-settings-supabase'
-        );
-        
         // API Settings
         add_settings_field(
             'api_key',
@@ -328,15 +321,6 @@ class AnamAdminSettings {
             array($this, 'supabase_table_field'),
             'anam-settings-supabase',
             'anam_supabase_section'
-        );
-        
-        // Email Notification Settings
-        add_settings_field(
-            'email_notifications',
-            'Enable Email Notifications',
-            array($this, 'email_notifications_field'),
-            'anam-settings-supabase',
-            'anam_notifications_section'
         );
         
     }
@@ -483,10 +467,6 @@ class AnamAdminSettings {
     
     public function supabase_section_callback() {
         echo '<p>Configure Supabase database connection for storing parsed vehicle data. <a href="?page=anam-sessions">View Sessions →</a></p>';
-    }
-    
-    public function notifications_section_callback() {
-        echo '<p>Configure email notifications for new conversation sessions.</p>';
     }
     
     public function api_key_field() {
@@ -654,7 +634,7 @@ class AnamAdminSettings {
         $value = isset($options['container_id']) ? $options['container_id'] : '';
         
         echo '<div id="element-id-section">';
-        echo '<input type="text" id="anam-container-id" name="' . $this->option_name . '[container_id]" value="' . esc_attr($value) . '" class="regular-text" placeholder="anam-stream-container" />';
+        echo '<input type="text" id="anam-container-id" name="' . $this->option_name . '[container_id]" value="' . esc_attr($value) . '" class="regular-text" placeholder="element-id" />';
         echo '<p class="description">HTML element ID where the avatar should appear (e.g., "anam-stream-container")</p>';
         echo '</div>';
     }
@@ -698,16 +678,9 @@ class AnamAdminSettings {
     
     public function supabase_table_field() {
         $options = get_option($this->option_name, array());
-        $value = isset($options['supabase_table']) ? $options['supabase_table'] : '';
-        echo '<input type="text" name="' . $this->option_name . '[supabase_table]" value="' . esc_attr($value) . '" class="regular-text supabase-field" placeholder="vehicle_data" />';
+        $value = isset($options['supabase_table']) ? $options['supabase_table'] : 'vehicle_conversations';
+        echo '<input type="text" name="' . $this->option_name . '[supabase_table]" value="' . esc_attr($value) . '" class="regular-text supabase-field" placeholder="vehicle_conversations" />';
         echo '<p class="description">Name of the table to store vehicle data (default: vehicle_conversations)</p>';
-    }
-    
-    public function email_notifications_field() {
-        $options = get_option($this->option_name, array());
-        $value = isset($options['email_notifications']) ? $options['email_notifications'] : true;
-        echo '<label><input type="checkbox" name="' . $this->option_name . '[email_notifications]" value="1" ' . checked($value, true, false) . ' /> Send email when new conversation is ready for review</label>';
-        echo '<p class="description">Email will be sent to: ' . get_option('admin_email') . '</p>';
     }
     
     public function page_selection_field() {

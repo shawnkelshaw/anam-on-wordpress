@@ -190,10 +190,34 @@ jQuery(document).ready(function($) {
             elementIdRow.show();
             positionRow.hide();
             pageSelectionRow.hide();
+            
+            // Set default value for Element ID if empty
+            const elementIdInput = $('#anam-container-id');
+            if (!elementIdInput.val() || elementIdInput.val().trim() === '') {
+                elementIdInput.val('anam-stream-container');
+            }
+            
         } else if (selectedMethod === 'page_position') {
             elementIdRow.hide();
             positionRow.show();
             pageSelectionRow.show();
+            
+            // Set defaults for page position method if no saved values
+            const homeCheckbox = $('input[value="homepage"]');
+            const positionSelect = $('#anam-avatar-position');
+            
+            // Check if any page is already selected
+            const anyPageSelected = $('input[name="anam_options[selected_pages][]"]:checked').length > 0;
+            
+            if (!anyPageSelected) {
+                // Default to Home checked
+                homeCheckbox.prop('checked', true);
+            }
+            
+            // Default to Bottom Right if no position selected
+            if (!positionSelect.val() || positionSelect.val() === '') {
+                positionSelect.val('bottom-right');
+            }
         }
     }
     
