@@ -317,7 +317,7 @@ class AnamAdminSettings {
         
         ?>
         <select name="<?php echo $this->option_name; ?>[llm_id]" id="anam-llm-dropdown" class="regular-text anam-dependent-field">
-            <option value="" <?php selected($dropdown_value, ''); ?>>Default (Leave Empty)</option>
+            <option value="" <?php selected($dropdown_value, ''); ?>>Default (Safest if unsure)</option>
             <option value="0934d97d-0c3a-4f33-91b0-5e136a0ef466" <?php selected($dropdown_value, '0934d97d-0c3a-4f33-91b0-5e136a0ef466'); ?>>Standard Anam LLM</option>
             <option value="ANAM_LLAMA_v3_3_70B_V1" <?php selected($dropdown_value, 'ANAM_LLAMA_v3_3_70B_V1'); ?>>Llama 3.3 70B</option>
             <option value="CUSTOMER_CLIENT_V1" <?php selected($dropdown_value, 'CUSTOMER_CLIENT_V1'); ?>>Custom Client Model</option>
@@ -347,7 +347,7 @@ class AnamAdminSettings {
                     <h4>Available Options:</h4>
                     
                     <div style="margin-bottom: 15px; padding: 15px; background: #f9f9f9; border-left: 4px solid #46b450;">
-                        <strong>Default (Leave Empty)</strong><br>
+                        <strong>Default (Safest if unsure)</strong><br>
                         <em>Recommended for most users</em><br>
                         Most Anam.ai personas have a default LLM configured. This is the safest choice if you're unsure.
                     </div>
@@ -377,7 +377,7 @@ class AnamAdminSettings {
                 </div>
                 
                 <div style="background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-                    <strong>💡 Pro Tip:</strong> Start with "Default (Leave Empty)" - it works for most personas. Only change if your specific persona requires a different LLM.
+                    <strong>💡 Pro Tip:</strong> Start with "Default (Safest if unsure)" - it works for most personas. Only change if your specific persona requires a different LLM.
                 </div>
                 
                 <div style="text-align: right;">
@@ -1834,13 +1834,47 @@ class AnamAdminSettings {
             wp_send_json_error('API key not configured');
         }
         
-        // Try simple API verification - just check if we can list personas
-        $response = wp_remote_get('https://api.anam.ai/v1/personas', array(
+        // Get persona configuration from options
+        $persona_id = isset($options['persona_id']) ? $options['persona_id'] : '';
+        $avatar_id = isset($options['avatar_id']) ? $options['avatar_id'] : '';
+        $voice_id = isset($options['voice_id']) ? $options['voice_id'] : '';
+        $llm_id = isset($options['llm_id']) ? $options['llm_id'] : '';
+        $system_prompt = isset($options['system_prompt']) ? $options['system_prompt'] : '';
+        
+        // Build persona config
+        $persona_config = array();
+        
+        if (!empty($persona_id)) {
+            $persona_config['personaId'] = $persona_id;
+        }
+        
+        if (!empty($avatar_id)) {
+            $persona_config['avatarId'] = $avatar_id;
+        }
+        
+        if (!empty($voice_id)) {
+            $persona_config['voiceId'] = $voice_id;
+        }
+        
+        if (!empty($llm_id)) {
+            $persona_config['llmId'] = $llm_id;
+        }
+        
+        if (!empty($system_prompt)) {
+            $persona_config['systemPrompt'] = $system_prompt;
+        }
+        
+        // Create session token request
+        $response = wp_remote_post('https://api.anam.ai/v1/auth/session-token', array(
             'headers' => array(
-                'X-Api-Key' => $api_key,
                 'Content-Type' => 'application/json',
+                'Authorization' => 'Bearer ' . $api_key
             ),
+            'body' => json_encode(array(
+                'personaConfig' => $persona_config
+            )),
             'timeout' => 15,
+            'sslverify' => true
         ));
         
         if (is_wp_error($response)) {
@@ -1851,17 +1885,21 @@ class AnamAdminSettings {
         $response_body = wp_remote_retrieve_body($response);
         
         // Debug logging
-        error_log('Anam API Response Code: ' . $response_code);
-        error_log('Anam API Response Body: ' . $response_body);
+        error_log('Anam Session Token Response Code: ' . $response_code);
+        error_log('Anam Session Token Response Body: ' . $response_body);
         
         if ($response_code === 200 || $response_code === 201) {
-            // API key is valid if we can access personas endpoint
-            wp_send_json_success(array(
-                'message' => 'API key verified successfully',
-                'status' => $response_code
-            ));
+            $data = json_decode($response_body, true);
+            
+            if (isset($data['sessionToken'])) {
+                wp_send_json_success(array(
+                    'sessionToken' => $data['sessionToken']
+                ));
+            } else {
+                wp_send_json_error('No session token in response: ' . $response_body);
+            }
         } else {
-            wp_send_json_error('API verification failed with status: ' . $response_code . '. Response: ' . $response_body);
+            wp_send_json_error('Session token request failed with status: ' . $response_code . '. Response: ' . $response_body);
         }
     }
 }

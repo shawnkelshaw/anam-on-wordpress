@@ -3,13 +3,12 @@ jQuery(document).ready(function($) {
     // Function to validate if all required fields have values
     function validateRequiredFields() {
         const isVerified = $('#api-status').text().includes('✅');
+        const personaId = $('input[name="anam_options[persona_id]"]').val().trim();
         const avatarId = $('input[name="anam_options[avatar_id]"]').val().trim();
         const voiceId = $('input[name="anam_options[voice_id]"]').val().trim();
-        const llmId = $('input[name="anam_options[llm_id]"], select[name="anam_options[llm_id]"]').val();
-        const systemPrompt = $('textarea[name="anam_options[system_prompt]"]').val().trim();
         
-        // Check if all required fields are filled
-        const allFieldsFilled = isVerified && avatarId && voiceId && llmId && systemPrompt;
+        // Check if all required fields are filled (API key verified + Persona ID + Avatar ID + Voice ID)
+        const allFieldsFilled = isVerified && personaId && avatarId && voiceId;
         
         // Enable/disable Save Settings button
         $('#anam-save-settings').prop('disabled', !allFieldsFilled);
@@ -183,16 +182,24 @@ jQuery(document).ready(function($) {
     // Auto-verification on page load
     function autoVerifyApiKey() {
         const apiKey = $('#anam-api-key').val();
+        const isAlreadyVerified = $('#api-status').text().includes('✅');
         
-        // If there's an API key, run verification with modal
-        if (apiKey && apiKey.trim() !== '') {
+        // Only run verification if there's an API key AND it's not already verified
+        if (apiKey && apiKey.trim() !== '' && !isAlreadyVerified) {
             runVerificationWithModal();
-        } else {
+        } else if (!apiKey || apiKey.trim() === '') {
             // No API key - disable everything
             $('.anam-dependent-field').prop('disabled', true).css('opacity', '0.5');
             $('#anam-avatar-position').prop('disabled', true).css('opacity', '0.5');
             $('#page-selection-section input[type="checkbox"]').prop('disabled', true).css('opacity', '0.5');
             $('#anam-save-settings').prop('disabled', true);
+        } else if (isAlreadyVerified) {
+            // API key is already verified - just enable fields and validate
+            $('.anam-dependent-field').prop('disabled', false).css('opacity', '1');
+            $('#anam-avatar-position').prop('disabled', false).css('opacity', '1');
+            $('#page-selection-section input[type="checkbox"]').prop('disabled', false).css('opacity', '1');
+            $('#anam-reset-all').prop('disabled', false);
+            validateRequiredFields();
         }
     }
     
@@ -650,7 +657,7 @@ jQuery(document).ready(function($) {
     });
     
     // Add event listeners to required fields to validate on change
-    $('input[name="anam_options[avatar_id]"], input[name="anam_options[voice_id]"], input[name="anam_options[llm_id]"], select[name="anam_options[llm_id]"], textarea[name="anam_options[system_prompt]"]').on('input change', function() {
+    $('input[name="anam_options[persona_id]"], input[name="anam_options[avatar_id]"], input[name="anam_options[voice_id]"]').on('input change', function() {
         validateRequiredFields();
     });
     
