@@ -230,11 +230,110 @@ jQuery(document).ready(function($) {
         loadSessions(page, 10);
     });
     
-    // View session button (placeholder for future functionality)
+    // View session button - show modal with session details
     $(document).on('click', '.view-session', function() {
         const sessionId = $(this).data('session-id');
-        alert('View session details for: ' + sessionId + '\n\nThis feature will be implemented next.');
+        console.log('📋 Loading session details for:', sessionId);
+        
+        // Show modal
+        $('#session-details-modal').show();
+        
+        // Reset content to loading state
+        $('#session-details-content').html(
+            '<div style="text-align: center; padding: 40px;">' +
+            '<div class="anam-spinner" style="margin: 0 auto 20px; width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #0073aa; border-radius: 50%; animation: spin 1s linear infinite;"></div>' +
+            '<p>Loading session details...</p>' +
+            '</div>'
+        );
+        
+        // Fetch session details
+        $.ajax({
+            url: ANAM_CONFIG.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'anam_get_session_details',
+                nonce: ANAM_CONFIG.nonce,
+                sessionId: sessionId
+            },
+            success: function(response) {
+                console.log('✅ Session details received:', response);
+                console.log('Response data:', response.data);
+                console.log('Has transcript?', response.data ? response.data.has_transcript : 'no data');
+                console.log('Transcript:', response.data ? response.data.transcript : 'no data');
+                
+                if (response.success && response.data) {
+                    const data = response.data;
+                    
+                    if (data.has_transcript && data.transcript && data.transcript.length > 0) {
+                        // Display formatted transcript
+                        let html = '<h3>Session Transcript</h3>';
+                        html += '<p style="color: #666; margin-bottom: 20px;">Session ID: <code>' + sessionId + '</code> | ' + data.message_count + ' messages</p>';
+                        html += '<div style="max-height: 500px; overflow-y: auto;">';
+                        
+                        data.transcript.forEach(function(msg) {
+                            const isUser = msg.type === 'user' || msg.role === 'user';
+                            const bgColor = isUser ? '#e3f2fd' : '#f1f8e9';
+                            const label = isUser ? '👤 User' : '🤖 Avatar';
+                            const text = msg.text || msg.content || msg.message || '';
+                            
+                            html += '<div style="margin-bottom: 15px; padding: 12px; background: ' + bgColor + '; border-radius: 8px; border-left: 4px solid ' + (isUser ? '#2196f3' : '#8bc34a') + ';">';
+                            html += '<div style="font-weight: bold; font-size: 12px; color: #666; margin-bottom: 6px;">' + label + '</div>';
+                            html += '<div style="color: #333; line-height: 1.5;">' + escapeHtml(text) + '</div>';
+                            html += '</div>';
+                        });
+                        
+                        html += '</div>';
+                        $('#session-details-content').html(html);
+                    } else {
+                        // No transcript available
+                        $('#session-details-content').html(
+                            '<div style="text-align: center; padding: 40px;">' +
+                            '<div style="font-size: 48px; margin-bottom: 20px;">💬</div>' +
+                            '<h3 style="color: #666;">No Transcript Available</h3>' +
+                            '<p style="color: #999;">This session does not have a saved transcript.</p>' +
+                            '<p style="color: #999; font-size: 13px;">Transcripts are captured when users interact with the avatar on your site.</p>' +
+                            '</div>'
+                        );
+                    }
+                } else {
+                    $('#session-details-content').html(
+                        '<div class="notice notice-error"><p>Failed to load session details: ' + 
+                        (response.data || 'Unknown error') + '</p></div>'
+                    );
+                }
+            },
+            error: function(xhr, status, error) {
+                console.error('❌ Error loading session details:', error);
+                $('#session-details-content').html(
+                    '<div class="notice notice-error"><p>Error loading session details: ' + error + '</p></div>'
+                );
+            }
+        });
     });
+    
+    // Close modal button
+    $(document).on('click', '#close-session-modal', function() {
+        $('#session-details-modal').hide();
+    });
+    
+    // Close modal when clicking outside
+    $(document).on('click', '#session-details-modal', function(e) {
+        if (e.target.id === 'session-details-modal') {
+            $('#session-details-modal').hide();
+        }
+    });
+    
+    // Helper function to escape HTML
+    function escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+    }
     
     // ============================================================================
     // INITIALIZE

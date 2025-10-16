@@ -26,8 +26,6 @@ class AnamAdminSettings {
     public function __construct() {
         $this->plugin_dir = plugin_dir_path(__FILE__);
         
-        // Database functionality removed - using Anam API directly
-        
         // Hook into WordPress
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'init_settings'));
@@ -36,10 +34,58 @@ class AnamAdminSettings {
         add_action('wp_ajax_nopriv_anam_get_session_token', array($this, 'get_session_token'));
         add_action('wp_ajax_anam_get_session_data', array($this, 'get_session_data'));
         add_action('wp_ajax_anam_list_sessions', array($this, 'list_sessions'));
+        add_action('wp_ajax_anam_get_session_details', array($this, 'get_session_details'));
+        add_action('wp_ajax_anam_save_transcript', array($this, 'save_transcript'));
+        add_action('wp_ajax_nopriv_anam_save_transcript', array($this, 'save_transcript'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+        
+        // Create database table on plugin activation
+        register_activation_hook(__FILE__, array($this, 'create_transcripts_table'));
+        
+        // Also create table on init if it doesn't exist
+        add_action('init', array($this, 'ensure_transcripts_table_exists'));
     }
     
-    // Removed table creation - using Anam API directly
+    /**
+     * Ensure transcripts table exists (runs on every init)
+     */
+    public function ensure_transcripts_table_exists() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        
+        // Check if table exists
+        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'") === $table_name;
+        
+        if (!$table_exists) {
+            error_log('⚠️ Anam transcripts table missing, creating now...');
+            $this->create_transcripts_table();
+        }
+    }
+    
+    /**
+     * Create database table for storing transcripts
+     */
+    public function create_transcripts_table() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        $charset_collate = $wpdb->get_charset_collate();
+        
+        $sql = "CREATE TABLE IF NOT EXISTS $table_name (
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            session_id varchar(255) NOT NULL,
+            transcript_data longtext NOT NULL,
+            message_count int(11) DEFAULT 0,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY session_id (session_id)
+        ) $charset_collate;";
+        
+        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+        dbDelta($sql);
+        
+        error_log('✅ Anam transcripts table created/verified');
+    }
     
     public function add_admin_menu() {
         // Add top-level menu (with Getting Started as default page)
@@ -896,6 +942,41 @@ class AnamAdminSettings {
         let conversationTranscript = [];
         let currentSessionId = null;
         
+        // Function to update transcript debug box
+        function updateTranscriptDebugBox(messages) {
+            const transcriptMessages = document.getElementById('transcript-messages');
+            if (!transcriptMessages) {
+                console.log('⚠️ Transcript debug box not found');
+                return;
+            }
+            
+            if (!messages || messages.length === 0) {
+                transcriptMessages.innerHTML = '<em style="color: #999;">Waiting for conversation to start...</em>';
+                return;
+            }
+            
+            let html = '';
+            messages.forEach((msg, index) => {
+                const isUser = msg.type === 'user' || msg.role === 'user';
+                const bgColor = isUser ? '#e3f2fd' : '#f1f8e9';
+                const label = isUser ? '👤 User' : '🤖 Avatar';
+                const text = msg.text || msg.content || msg.message || '';
+                
+                html += `<div style="margin-bottom: 10px; padding: 8px; background: ${bgColor}; border-radius: 6px;">
+                    <div style="font-weight: bold; font-size: 11px; color: #666; margin-bottom: 4px;">${label}</div>
+                    <div style="color: #333;">${text}</div>
+                </div>`;
+            });
+            
+            transcriptMessages.innerHTML = html;
+            
+            // Auto-scroll to bottom
+            const transcriptDebug = document.getElementById('transcript-debug');
+            if (transcriptDebug) {
+                transcriptDebug.scrollTop = transcriptDebug.scrollHeight;
+            }
+        }
+        
         // Missing function that's being called - add placeholder
         function showElementTokenIcon(success) {
             console.log('showElementTokenIcon called with:', success);
@@ -941,29 +1022,42 @@ class AnamAdminSettings {
             return null;
         }
         
-        // Function to send session ID to server for storage
-        async function sendSessionIdToServer(sessionId) {
+        // Function to save transcript to database
+        async function saveTranscriptToDatabase(sessionId) {
             if (!sessionId) {
-                console.log('📝 No session ID to send to server');
+                console.log('📝 No session ID to save transcript');
+                return;
+            }
+            
+            if (!conversationTranscript || conversationTranscript.length === 0) {
+                console.log('📝 No transcript data to save');
                 return;
             }
             
             try {
-                console.log('📤 Storing session ID on server...');
+                console.log('💾 Saving transcript to database...');
+                console.log('📋 Session ID:', sessionId);
+                console.log('💬 Messages:', conversationTranscript.length);
+                
+                // Clean the transcript data - convert to plain array
+                const cleanTranscript = Array.isArray(conversationTranscript) 
+                    ? conversationTranscript.map(msg => ({
+                        type: msg.type || msg.role || 'unknown',
+                        text: msg.text || msg.content || msg.message || '',
+                        timestamp: msg.timestamp || new Date().toISOString()
+                    }))
+                    : [];
+                
+                console.log('📦 Clean transcript:', cleanTranscript);
                 
                 const response = await fetch(ANAM_CONFIG.ajaxUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: new URLSearchParams({
-                        action: 'anam_process_transcript',
+                        action: 'anam_save_transcript',
                         nonce: ANAM_CONFIG.nonce,
                         session_id: sessionId,
-                        timestamp: new Date().toISOString(),
-                        page_url: window.location.href,
-                        metadata: JSON.stringify({
-                            user_agent: navigator.userAgent,
-                            page_title: document.title
-                        })
+                        transcript_data: JSON.stringify(cleanTranscript)
                     })
                 });
                 
@@ -974,12 +1068,12 @@ class AnamAdminSettings {
                 const data = await response.json();
                 
                 if (data.success) {
-                    console.log('✅ Session ID stored on server:', data.data);
+                    console.log('✅ Transcript saved successfully:', data.data);
                 } else {
-                    console.error('❌ Server storage error:', data.data);
+                    console.error('❌ Failed to save transcript:', data.data);
                 }
             } catch (error) {
-                console.error('❌ Failed to store session ID on server:', error);
+                console.error('❌ Error saving transcript:', error);
             }
         }
         
@@ -1175,10 +1269,11 @@ class AnamAdminSettings {
                 anamClient = createClient(sessionToken);
                 console.log('✅ Client created:', anamClient);
                 
-                // Add transcript capture event listener
+                // Add transcript capture event listener with debug display
                 anamClient.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages) => {
                     conversationTranscript = messages;
                     console.log('📝 Transcript updated:', messages.length, 'messages');
+                    updateTranscriptDebugBox(messages);
                 });
                 
                 // Add listener for when streaming starts (session ID might be available then)
@@ -1251,6 +1346,13 @@ class AnamAdminSettings {
                 customContainer.innerHTML = '';
                 video.style.display = 'block';
                 customContainer.appendChild(video);
+                
+                // Add transcript debug box
+                const transcriptDebug = document.createElement('div');
+                transcriptDebug.id = 'transcript-debug';
+                transcriptDebug.style.cssText = 'margin-top: 15px; padding: 15px; background: #f8f9fa; border: 1px solid #ddd; border-radius: 8px; max-height: 300px; overflow-y: auto;';
+                transcriptDebug.innerHTML = '<div style="font-weight: bold; margin-bottom: 10px; color: #666;">📝 Live Transcript</div><div id="transcript-messages" style="font-size: 13px; line-height: 1.6;"><em style="color: #999;">Waiting for conversation to start...</em></div>';
+                customContainer.appendChild(transcriptDebug);
                 
                 // Add expand button
                 const expandBtn = document.createElement('button');
@@ -1420,9 +1522,11 @@ class AnamAdminSettings {
                 
                 if (sessionIdToProcess) {
                     console.log('📋 Processing session:', sessionIdToProcess);
+                    console.log('💬 Transcript messages:', conversationTranscript.length);
+                    console.log('📝 Transcript data:', conversationTranscript);
                     
-                    // Store session ID on server for audit trail
-                    await sendSessionIdToServer(sessionIdToProcess);
+                    // Save transcript to database
+                    await saveTranscriptToDatabase(sessionIdToProcess);
                     
                     currentSessionId = null; // Clear session ID after sending
                 } else {
@@ -2407,6 +2511,150 @@ class AnamAdminSettings {
 
         wp_send_json_success($data);
     }
+    
+    /**
+     * AJAX handler to get individual session details with transcript
+     */
+    public function get_session_details() {
+        // Verify nonce
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = isset($_POST['sessionId']) ? sanitize_text_field($_POST['sessionId']) : '';
+        
+        if (empty($session_id)) {
+            wp_send_json_error('Session ID is required');
+            return;
+        }
+        
+        // Get saved transcript from database
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        
+        $transcript_row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE session_id = %s",
+            $session_id
+        ));
+        
+        $response_data = array(
+            'session_id' => $session_id,
+            'has_transcript' => false,
+            'transcript' => null,
+            'message_count' => 0
+        );
+        
+        if ($transcript_row) {
+            error_log('Raw transcript data: ' . substr($transcript_row->transcript_data, 0, 200));
+            $transcript_messages = json_decode($transcript_row->transcript_data, true);
+            
+            if ($transcript_messages === null) {
+                error_log('❌ JSON decode failed: ' . json_last_error_msg());
+                error_log('Raw data length: ' . strlen($transcript_row->transcript_data));
+            }
+            
+            $response_data['has_transcript'] = true;
+            $response_data['transcript'] = $transcript_messages;
+            $response_data['message_count'] = $transcript_row->message_count;
+            $response_data['created_at'] = $transcript_row->created_at;
+            $response_data['updated_at'] = $transcript_row->updated_at;
+            
+            error_log('✅ Transcript found for session: ' . $session_id . ' (' . $transcript_row->message_count . ' messages)');
+        } else {
+            error_log('⚠️ No transcript found for session: ' . $session_id);
+        }
+        
+        wp_send_json_success($response_data);
+    }
+    
+    /**
+     * AJAX handler to save transcript data
+     */
+    public function save_transcript() {
+        // Verify nonce
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = isset($_POST['session_id']) ? sanitize_text_field($_POST['session_id']) : '';
+        $transcript_data = isset($_POST['transcript_data']) ? $_POST['transcript_data'] : '';
+        
+        if (empty($session_id)) {
+            wp_send_json_error('Session ID is required');
+            return;
+        }
+        
+        if (empty($transcript_data)) {
+            wp_send_json_error('Transcript data is required');
+            return;
+        }
+        
+        // Decode and validate transcript data
+        $messages = json_decode(stripslashes($transcript_data), true);
+        if (!$messages || !is_array($messages)) {
+            error_log('❌ Invalid transcript data received');
+            error_log('Raw data: ' . substr($transcript_data, 0, 200));
+            wp_send_json_error('Invalid transcript data');
+            return;
+        }
+        
+        // Re-encode as clean JSON for storage
+        $clean_json = json_encode($messages);
+        
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        
+        // Check if transcript already exists for this session
+        $existing = $wpdb->get_row($wpdb->prepare(
+            "SELECT id FROM $table_name WHERE session_id = %s",
+            $session_id
+        ));
+        
+        $message_count = count($messages);
+        
+        if ($existing) {
+            // Update existing transcript
+            $result = $wpdb->update(
+                $table_name,
+                array(
+                    'transcript_data' => $clean_json,
+                    'message_count' => $message_count,
+                    'updated_at' => current_time('mysql')
+                ),
+                array('session_id' => $session_id),
+                array('%s', '%d', '%s'),
+                array('%s')
+            );
+        } else {
+            // Insert new transcript
+            $result = $wpdb->insert(
+                $table_name,
+                array(
+                    'session_id' => $session_id,
+                    'transcript_data' => $clean_json,
+                    'message_count' => $message_count,
+                    'created_at' => current_time('mysql'),
+                    'updated_at' => current_time('mysql')
+                ),
+                array('%s', '%s', '%d', '%s', '%s')
+            );
+        }
+        
+        if ($result === false) {
+            error_log('❌ Failed to save transcript: ' . $wpdb->last_error);
+            wp_send_json_error('Database error: ' . $wpdb->last_error);
+            return;
+        }
+        
+        error_log('✅ Transcript saved for session: ' . $session_id . ' (' . $message_count . ' messages)');
+        wp_send_json_success(array(
+            'message' => 'Transcript saved successfully',
+            'session_id' => $session_id,
+            'message_count' => $message_count
+        ));
+    }
 
 }
 
@@ -2445,7 +2693,7 @@ function anam_render_sessions_page() {
                 </div>
             </div>
             
-            <div id="sessions-container" style="display: none;">
+            <div id="sessions-container" style="display: none; max-width: 1440px;">
                 <table class="wp-list-table widefat fixed striped">
                     <thead>
                         <tr>
@@ -2467,10 +2715,34 @@ function anam_render_sessions_page() {
             </div>
         <?php endif; ?>
         
+        <!-- Session Details Modal -->
+        <div id="session-details-modal" style="display: none; position: fixed; z-index: 100000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4);">
+            <div style="background-color: #fefefe; margin: 5% auto; padding: 0; border: 1px solid #888; width: 90%; max-width: 1200px; border-radius: 4px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
+                <div style="padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;">
+                    <h2 style="margin: 0;">Session Details</h2>
+                    <button id="close-session-modal" style="background: none; border: none; font-size: 28px; font-weight: bold; cursor: pointer; color: #aaa;">&times;</button>
+                </div>
+                <div id="session-details-content" style="padding: 20px; max-height: 70vh; overflow-y: auto;">
+                    <div style="text-align: center; padding: 40px;">
+                        <div class="anam-spinner" style="margin: 0 auto 20px; width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #0073aa; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                        <p>Loading session details...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
         <style>
             @keyframes spin {
                 0% { transform: rotate(0deg); }
                 100% { transform: rotate(360deg); }
+            }
+            #session-details-modal pre {
+                background: #f5f5f5;
+                padding: 15px;
+                border-radius: 4px;
+                overflow-x: auto;
+                font-size: 12px;
+                line-height: 1.5;
             }
         </style>
     </div>
