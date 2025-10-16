@@ -35,6 +35,7 @@ class AnamAdminSettings {
         add_action('wp_ajax_anam_get_session_data', array($this, 'get_session_data'));
         add_action('wp_ajax_anam_list_sessions', array($this, 'list_sessions'));
         add_action('wp_ajax_anam_get_session_details', array($this, 'get_session_details'));
+        add_action('wp_ajax_anam_get_session_metadata', array($this, 'get_session_metadata'));
         add_action('wp_ajax_anam_save_transcript', array($this, 'save_transcript'));
         add_action('wp_ajax_nopriv_anam_save_transcript', array($this, 'save_transcript'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
@@ -2569,6 +2570,63 @@ class AnamAdminSettings {
     }
     
     /**
+     * AJAX handler to get session metadata from Anam API
+     */
+    public function get_session_metadata() {
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = isset($_POST['sessionId']) ? sanitize_text_field($_POST['sessionId']) : '';
+        
+        if (empty($session_id)) {
+            wp_send_json_error('Session ID is required');
+            return;
+        }
+        
+        $options = get_option('anam_options', array());
+        $api_key = isset($options['api_key']) ? $options['api_key'] : '';
+        
+        if (empty($api_key)) {
+            wp_send_json_error('API Key not configured');
+            return;
+        }
+        
+        $api_url = 'https://api.anam.ai/v1/sessions/' . urlencode($session_id);
+        
+        $response = wp_remote_get($api_url, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'timeout' => 15
+        ));
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error('Failed to fetch session metadata: ' . $response->get_error_message());
+            return;
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        
+        if ($status_code !== 200) {
+            wp_send_json_error('API returned error: ' . $status_code);
+            return;
+        }
+        
+        $data = json_decode($body, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            wp_send_json_error('Failed to parse API response');
+            return;
+        }
+        
+        wp_send_json_success($data);
+    }
+    
+    /**
      * AJAX handler to save transcript data
      */
     public function save_transcript() {
@@ -2679,7 +2737,7 @@ function anam_render_sessions_page() {
             </div>
         <?php else: ?>
             <div class="notice notice-info">
-                <p>Displaying sessions for Persona ID: <code><?php echo esc_html($persona_id); ?></code></p>
+                <p>Displaying sessions for Persona ID: <code><?php echo esc_html($persona_id); ?></code> | <a href="<?php echo admin_url('admin.php?page=anam-settings'); ?>">Avatar Setup</a></p>
             </div>
             
             <div id="sessions-loading" style="text-align: center; padding: 40px;">
@@ -2688,9 +2746,6 @@ function anam_render_sessions_page() {
             </div>
             
             <div id="sessions-error" style="display: none;">
-                <div class="notice notice-error">
-                    <p id="sessions-error-message"></p>
-                </div>
             </div>
             
             <div id="sessions-container" style="display: none; max-width: 1440px;">
@@ -2719,8 +2774,13 @@ function anam_render_sessions_page() {
         <div id="session-details-modal" style="display: none; position: fixed; z-index: 100000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4);">
             <div style="background-color: #fefefe; margin: 5% auto; padding: 0; border: 1px solid #888; width: 90%; max-width: 1200px; border-radius: 4px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
                 <div style="padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;">
-                    <h2 style="margin: 0;">Session Details</h2>
+                    <h2 style="margin: 0;">Chat Details</h2>
                     <button id="close-session-modal" style="background: none; border: none; font-size: 28px; font-weight: bold; cursor: pointer; color: #aaa;">&times;</button>
+                </div>
+                <div class="nav-tab-wrapper" style="margin: 0; border-bottom: 1px solid #ddd;">
+                    <a href="#" class="nav-tab" data-tab="session-json">Session JSON</a>
+                    <a href="#" class="nav-tab nav-tab-active" data-tab="transcript" style="background: white;">Transcript</a>
+                    <a href="#" class="nav-tab" data-tab="transcript-json">Transcript JSON</a>
                 </div>
                 <div id="session-details-content" style="padding: 20px; max-height: 70vh; overflow-y: auto;">
                     <div style="text-align: center; padding: 40px;">

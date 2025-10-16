@@ -166,8 +166,7 @@ jQuery(document).ready(function($) {
                     console.log('📋 Meta:', meta);
                     
                     if (sessions.length === 0) {
-                        $('#sessions-error-message').text('No sessions found. API returned empty data array.');
-                        $('#sessions-error').show();
+                        $('#sessions-error').html('<div class="notice notice-warning"><p>No sessions found. API returned empty data array.</p></div>').show();
                         return;
                     }
                     
@@ -212,14 +211,12 @@ jQuery(document).ready(function($) {
                     
                     $('#sessions-container').show();
                 } else {
-                    $('#sessions-error-message').text(response.data || 'Failed to load sessions');
-                    $('#sessions-error').show();
+                    $('#sessions-error').html('<div class="notice notice-error"><p>' + (response.data || 'Failed to load sessions') + '</p></div>').show();
                 }
             },
             error: function(xhr, status, error) {
                 $('#sessions-loading').hide();
-                $('#sessions-error-message').text('Error loading sessions: ' + error);
-                $('#sessions-error').show();
+                $('#sessions-error').html('<div class="notice notice-error"><p>Error loading sessions: ' + error + '</p></div>').show();
             }
         });
     }
@@ -230,13 +227,44 @@ jQuery(document).ready(function($) {
         loadSessions(page, 10);
     });
     
+    // Tab switching
+    $(document).on('click', '.nav-tab', function(e) {
+        e.preventDefault();
+        const tab = $(this).data('tab');
+        
+        // Update tab styling - remove active class and white background from all
+        $('.nav-tab').removeClass('nav-tab-active').css('background', '');
+        // Add active class and white background to clicked tab
+        $(this).addClass('nav-tab-active').css('background', 'white');
+        
+        // Show appropriate content
+        $('#session-json-tab-content').hide();
+        $('#transcript-tab-content').hide();
+        $('#transcript-json-tab-content').hide();
+        
+        if (tab === 'session-json') {
+            $('#session-json-tab-content').show();
+            
+            // Fetch session metadata if not already loaded
+            if ($('#session-json-tab-content').data('loaded') !== true) {
+                loadSessionMetadata();
+            }
+        } else if (tab === 'transcript') {
+            $('#transcript-tab-content').show();
+        } else if (tab === 'transcript-json') {
+            $('#transcript-json-tab-content').show();
+        }
+    });
+    
     // View session button - show modal with session details
     $(document).on('click', '.view-session', function() {
         const sessionId = $(this).data('session-id');
         console.log('📋 Loading session details for:', sessionId);
         
-        // Show modal
+        // Show modal and reset to transcript tab
         $('#session-details-modal').show();
+        $('.nav-tab').removeClass('nav-tab-active').css('background', '');
+        $('.nav-tab[data-tab="transcript"]').addClass('nav-tab-active').css('background', 'white');
         
         // Reset content to loading state
         $('#session-details-content').html(
@@ -264,11 +292,14 @@ jQuery(document).ready(function($) {
                 if (response.success && response.data) {
                     const data = response.data;
                     
+                    // Store session ID for later use
+                    $('#session-details-content').data('current-session-id', sessionId);
+                    
+                    // Build transcript tab content (formatted view)
+                    let transcriptHtml = '';
                     if (data.has_transcript && data.transcript && data.transcript.length > 0) {
-                        // Display formatted transcript
-                        let html = '<h3>Session Transcript</h3>';
-                        html += '<p style="color: #666; margin-bottom: 20px;">Session ID: <code>' + sessionId + '</code> | ' + data.message_count + ' messages</p>';
-                        html += '<div style="max-height: 500px; overflow-y: auto;">';
+                        transcriptHtml += '<p style="color: #666; margin-bottom: 20px;">Session ID: <code>' + sessionId + '</code> | ' + data.message_count + ' messages</p>';
+                        transcriptHtml += '<div style="max-height: 500px; overflow-y: auto;">';
                         
                         data.transcript.forEach(function(msg) {
                             const isUser = msg.type === 'user' || msg.role === 'user';
@@ -276,25 +307,42 @@ jQuery(document).ready(function($) {
                             const label = isUser ? '👤 User' : '🤖 Avatar';
                             const text = msg.text || msg.content || msg.message || '';
                             
-                            html += '<div style="margin-bottom: 15px; padding: 12px; background: ' + bgColor + '; border-radius: 8px; border-left: 4px solid ' + (isUser ? '#2196f3' : '#8bc34a') + ';">';
-                            html += '<div style="font-weight: bold; font-size: 12px; color: #666; margin-bottom: 6px;">' + label + '</div>';
-                            html += '<div style="color: #333; line-height: 1.5;">' + escapeHtml(text) + '</div>';
-                            html += '</div>';
+                            transcriptHtml += '<div style="margin-bottom: 15px; padding: 12px; background: ' + bgColor + '; border-radius: 8px; border-left: 4px solid ' + (isUser ? '#2196f3' : '#8bc34a') + ';">';
+                            transcriptHtml += '<div style="font-weight: bold; font-size: 12px; color: #666; margin-bottom: 6px;">' + label + '</div>';
+                            transcriptHtml += '<div style="color: #333; line-height: 1.5;">' + escapeHtml(text) + '</div>';
+                            transcriptHtml += '</div>';
                         });
                         
-                        html += '</div>';
-                        $('#session-details-content').html(html);
+                        transcriptHtml += '</div>';
                     } else {
-                        // No transcript available
-                        $('#session-details-content').html(
-                            '<div style="text-align: center; padding: 40px;">' +
+                        transcriptHtml = '<div style="text-align: center; padding: 40px;">' +
                             '<div style="font-size: 48px; margin-bottom: 20px;">💬</div>' +
                             '<h3 style="color: #666;">No Transcript Available</h3>' +
                             '<p style="color: #999;">This session does not have a saved transcript.</p>' +
                             '<p style="color: #999; font-size: 13px;">Transcripts are captured when users interact with the avatar on your site.</p>' +
-                            '</div>'
-                        );
+                            '</div>';
                     }
+                    
+                    // Build transcript JSON tab content
+                    let transcriptJsonHtml = '<p style="color: #666; margin-bottom: 20px;">Session ID: <code>' + sessionId + '</code></p>';
+                    if (data.has_transcript && data.transcript) {
+                        transcriptJsonHtml += '<pre style="background: #f5f5f5; padding: 15px; border-radius: 4px; overflow-x: auto; max-height: 500px;">' + 
+                            escapeHtml(JSON.stringify(data.transcript, null, 2)) + '</pre>';
+                    } else {
+                        transcriptJsonHtml += '<p style="color: #999;">No transcript data available.</p>';
+                    }
+                    
+                    // Build session JSON tab content (placeholder - will load on demand)
+                    let sessionJsonHtml = '<div style="text-align: center; padding: 40px;">' +
+                        '<p style="color: #999;">Click to load session metadata from Anam API...</p>' +
+                        '</div>';
+                    
+                    // Combine all three tabs
+                    let html = '<div id="session-json-tab-content" style="display: none;" data-loaded="false">' + sessionJsonHtml + '</div>';
+                    html += '<div id="transcript-tab-content">' + transcriptHtml + '</div>';
+                    html += '<div id="transcript-json-tab-content" style="display: none;">' + transcriptJsonHtml + '</div>';
+                    
+                    $('#session-details-content').html(html);
                 } else {
                     $('#session-details-content').html(
                         '<div class="notice notice-error"><p>Failed to load session details: ' + 
@@ -310,6 +358,53 @@ jQuery(document).ready(function($) {
             }
         });
     });
+    
+    // Function to load session metadata from Anam API
+    function loadSessionMetadata() {
+        const sessionId = $('#session-details-content').data('current-session-id');
+        
+        if (!sessionId) {
+            $('#session-json-tab-content').html('<p style="color: #999;">Session ID not found.</p>');
+            return;
+        }
+        
+        // Show loading state
+        $('#session-json-tab-content').html(
+            '<div style="text-align: center; padding: 40px;">' +
+            '<div class="anam-spinner" style="margin: 0 auto 20px; width: 30px; height: 30px; border: 3px solid #f3f3f3; border-top: 3px solid #0073aa; border-radius: 50%; animation: spin 1s linear infinite;"></div>' +
+            '<p>Loading session metadata from Anam API...</p>' +
+            '</div>'
+        );
+        
+        $.ajax({
+            url: ANAM_CONFIG.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'anam_get_session_metadata',
+                nonce: ANAM_CONFIG.nonce,
+                sessionId: sessionId
+            },
+            success: function(response) {
+                if (response.success && response.data) {
+                    let html = '<p style="color: #666; margin-bottom: 20px;">Session ID: <code>' + sessionId + '</code></p>';
+                    html += '<pre style="background: #f5f5f5; padding: 15px; border-radius: 4px; overflow-x: auto; max-height: 500px;">' + 
+                        escapeHtml(JSON.stringify(response.data, null, 2)) + '</pre>';
+                    
+                    $('#session-json-tab-content').html(html).data('loaded', true);
+                } else {
+                    $('#session-json-tab-content').html(
+                        '<div class="notice notice-error"><p>Failed to load session metadata: ' + 
+                        (response.data || 'Unknown error') + '</p></div>'
+                    );
+                }
+            },
+            error: function(xhr, status, error) {
+                $('#session-json-tab-content').html(
+                    '<div class="notice notice-error"><p>Error loading session metadata: ' + error + '</p></div>'
+                );
+            }
+        });
+    }
     
     // Close modal button
     $(document).on('click', '#close-session-modal', function() {
