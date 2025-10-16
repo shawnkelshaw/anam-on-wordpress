@@ -15,8 +15,8 @@ if (!defined('ABSPATH')) {
 // Include transcript handler (safe - will self-disable if feature flag is off)
 require_once(plugin_dir_path(__FILE__) . 'anam-transcript-handler.php');
 
-// Include sessions admin page
-require_once(plugin_dir_path(__FILE__) . 'anam-sessions-admin.php');
+// Sessions admin page disabled - functionality removed
+// require_once(plugin_dir_path(__FILE__) . 'anam-sessions-admin.php');
 
 class AnamAdminSettings {
     
@@ -26,44 +26,20 @@ class AnamAdminSettings {
     public function __construct() {
         $this->plugin_dir = plugin_dir_path(__FILE__);
         
-        // Create database table on activation
-        register_activation_hook(__FILE__, array($this, 'create_temp_transcript_table'));
+        // Database functionality removed - using Anam API directly
         
         // Hook into WordPress
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'init_settings'));
         add_action('wp_footer', array($this, 'add_avatar_integration'));
-        add_action('wp_ajax_anam_send_session', array($this, 'handle_send_session'));
-        add_action('wp_ajax_nopriv_anam_send_session', array($this, 'handle_send_session'));
-        add_action('wp_ajax_anam_session_token', array($this, 'handle_session_token'));
-        add_action('wp_ajax_nopriv_anam_session_token', array($this, 'handle_session_token'));
-        add_action('wp_ajax_anam_verify_api', array($this, 'verify_api_key'));
-        add_action('wp_ajax_nopriv_anam_verify_api', array($this, 'verify_api_key'));
-        add_action('wp_ajax_anam_toggle_advanced_sdk', array($this, 'handle_toggle_advanced_sdk'));
+        add_action('wp_ajax_anam_get_session_token', array($this, 'get_session_token'));
+        add_action('wp_ajax_nopriv_anam_get_session_token', array($this, 'get_session_token'));
+        add_action('wp_ajax_anam_get_session_data', array($this, 'get_session_data'));
+        add_action('wp_ajax_anam_list_sessions', array($this, 'list_sessions'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
     }
     
-    // Create temporary transcript table
-    public function create_temp_transcript_table() {
-        global $wpdb;
-        
-        $table_name = $wpdb->prefix . 'anam_temp_transcripts';
-        
-        $charset_collate = $wpdb->get_charset_collate();
-        
-        $sql = "CREATE TABLE $table_name (
-            id mediumint(9) NOT NULL AUTO_INCREMENT,
-            session_id varchar(255) NOT NULL,
-            transcript_data longtext NOT NULL,
-            created_at datetime DEFAULT CURRENT_TIMESTAMP,
-            expires_at datetime NOT NULL,
-            PRIMARY KEY (id),
-            UNIQUE KEY session_id (session_id)
-        ) $charset_collate;";
-        
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        dbDelta($sql);
-    }
+    // Removed table creation - using Anam API directly
     
     public function add_admin_menu() {
         // Add top-level menu (with Getting Started as default page)
@@ -214,6 +190,14 @@ class AnamAdminSettings {
             'anam_api_section'
         );
         
+        add_settings_field(
+            'auth_token',
+            'Auth Token',
+            array($this, 'auth_token_field'),
+            'anam-settings-avatar',
+            'anam_api_section'
+        );
+        
         // Avatar Settings
         add_settings_field(
             'persona_id',
@@ -344,10 +328,7 @@ class AnamAdminSettings {
                 settings_fields($this->option_group);
                 do_settings_sections('anam-settings-avatar');
                 ?>
-                <p class="submit">
-                    <button type="button" id="anam-reset-all" class="button button-secondary" style="margin-right: 10px;">Reset All</button>
-                    <input type="submit" name="submit" id="anam-save-settings" class="button button-primary" value="Save Settings">
-                </p>
+                <?php submit_button('Save Settings', 'primary', 'submit', true, array('id' => 'anam-save-settings')); ?>
             </form>
             
             <!-- Auto-verification Modal -->
@@ -359,19 +340,6 @@ class AnamAdminSettings {
                 </div>
             </div>
             
-            <!-- Reset All Confirmation Modal -->
-            <div id="anam-reset-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 999999; justify-content: center; align-items: center;">
-                <div style="background: white; padding: 30px; border-radius: 8px; max-width: 500px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
-                    <h2 style="margin: 0 0 15px 0; color: #d63638;">⚠️ Warning: Reset All Settings</h2>
-                    <p style="margin: 0 0 20px 0; color: #666; line-height: 1.6;">This will clear all Avatar Configuration and Display Settings fields. This action cannot be undone and the values cannot be recovered.</p>
-                    <p style="margin: 0 0 20px 0; color: #666; font-weight: bold;">Are you sure you want to continue?</p>
-                    <div style="text-align: right;">
-                        <button type="button" id="anam-reset-cancel" class="button button-secondary" style="margin-right: 10px;">Cancel</button>
-                        <button type="button" id="anam-reset-confirm" class="button button-primary" style="background: #d63638; border-color: #d63638;">Reset All</button>
-                    </div>
-                </div>
-            </div>
-            
             <style>
                 @keyframes spin {
                     0% { transform: rotate(0deg); }
@@ -379,7 +347,7 @@ class AnamAdminSettings {
                 }
             </style>
             
-            <div class="anam-help-section" style="margin-top: 30px; padding: 20px; background: #fff; border: 1px solid #ddd; border-radius: 5px;">
+            <div class="anam-help-section" style="margin-top: 30px; padding: 20px; background: #fff; border: 1px solid #ddd; border-radius: 5px; max-width: 978px;">
                 <h3>📚 Help & Documentation</h3>
                 <ul>
                     <li><strong>API Key:</strong> Found in your Anam.ai dashboard under API settings</li>
@@ -444,7 +412,7 @@ class AnamAdminSettings {
                 <?php
                 settings_fields($this->option_group);
                 do_settings_sections('anam-settings-supabase');
-                submit_button('Save Supabase Settings');
+                submit_button('Save Database Settings', 'primary', 'submit', true, array('id' => 'anam-supabase-submit'));
                 ?>
             </form>
         </div>
@@ -470,22 +438,17 @@ class AnamAdminSettings {
     public function api_key_field() {
         $options = get_option($this->option_name, array());
         $value = isset($options['api_key']) ? $options['api_key'] : '';
-        $is_verified = get_option('anam_api_verified', false);
         
-        // Only show verified if there's actually an API key saved AND it's verified
-        $show_verified = $is_verified && !empty($value);
+        echo '<input type="password" id="anam-api-key" name="' . $this->option_name . '[api_key]" value="' . esc_attr($value) . '" class="large-text" placeholder="Enter your Anam.ai API key" />';
+        echo '<p class="description">Your Anam.ai API key (base64 encoded Bearer token).</p>';
+    }
+    
+    public function auth_token_field() {
+        $options = get_option($this->option_name, array());
+        $value = isset($options['auth_token']) ? $options['auth_token'] : '';
         
-        echo '<input type="password" id="anam-api-key" name="' . $this->option_name . '[api_key]" value="' . esc_attr($value) . '" class="regular-text" placeholder="Enter your Anam.ai API key" />';
-        echo '<button type="button" id="verify-api-key" class="button button-secondary" style="margin-left: 10px;">Verify API Key</button>';
-        
-        if ($show_verified) {
-            echo '<span id="api-status" style="margin-left: 10px; color: #46b450;">✅ Verified</span>';
-        } else {
-            echo '<span id="api-status" style="margin-left: 10px; color: #dc3545;">❌ Not verified</span>';
-        }
-        
-        echo '<br><a href="https://app.anam.ai" target="_blank" style="font-size: 12px;">Get your Anam.ai API key →</a>';
-        echo '<p class="description">Your secret API key from Anam.ai dashboard. Must be verified before other settings are enabled.</p>';
+        echo '<input type="password" id="anam-auth-token" name="' . $this->option_name . '[auth_token]" value="' . esc_attr($value) . '" class="large-text" placeholder="Enter your Anam.ai Auth Token" />';
+        echo '<p class="description">Your authentication token for API management operations (listing sessions, etc.). This is the base64-encoded Bearer token.</p>';
     }
     
     public function persona_id_field() {
@@ -593,7 +556,7 @@ class AnamAdminSettings {
     public function system_prompt_field() {
         $options = get_option($this->option_name, array());
         $value = isset($options['system_prompt']) ? $options['system_prompt'] : 'You are a helpful digital assistant. Be friendly and concise in your responses.';
-        echo '<textarea name="' . $this->option_name . '[system_prompt]" rows="12" class="large-text anam-dependent-field" style="width: 100%; max-width: 100%; resize: vertical;" placeholder="Enter system prompt for your avatar...">' . esc_textarea($value) . '</textarea>';
+        echo '<textarea name="' . $this->option_name . '[system_prompt]" rows="12" class="large-text anam-dependent-field" style="width: 100%; max-width: 978px; resize: vertical;" placeholder="Enter system prompt for your avatar...">' . esc_textarea($value) . '</textarea>';
         echo '<p class="description">Instructions that define your avatar\'s personality and behavior. No character limit - write as much as you need!</p>';
     }
     
@@ -747,6 +710,11 @@ class AnamAdminSettings {
             $sanitized['api_key'] = trim($input['api_key']);
         }
         
+        if (isset($input['auth_token'])) {
+            // Don't sanitize auth token - it's base64 encoded and contains special characters
+            $sanitized['auth_token'] = trim($input['auth_token']);
+        }
+        
         if (isset($input['persona_id'])) {
             $sanitized['persona_id'] = sanitize_text_field($input['persona_id']);
         }
@@ -846,12 +814,25 @@ class AnamAdminSettings {
         
         // Enqueue on ALL admin pages for now to test
         if (strpos($hook, 'anam') !== false || $hook === 'anam-avatar_page_anam-settings' || $hook === 'settings_page_anam-settings') {
-            wp_enqueue_script('anam-admin', plugin_dir_url(__FILE__) . 'anam-admin.js', array('jquery'), '2.0.0', true);
+            error_log('✅ Enqueuing anam-admin.js on hook: ' . $hook);
+            
+            wp_enqueue_script('anam-admin', plugin_dir_url(__FILE__) . 'anam-admin.js', array('jquery'), '2.0.2', true);
+            
+            // Pass both anam_ajax (for verification) and ANAM_CONFIG (for sessions)
             wp_localize_script('anam-admin', 'anam_ajax', array(
                 'ajax_url' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('anam_verify_api'),
                 'admin_nonce' => wp_create_nonce('anam_admin_nonce')
             ));
+            
+            wp_localize_script('anam-admin', 'ANAM_CONFIG', array(
+                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'nonce' => wp_create_nonce('anam_session')
+            ));
+            
+            error_log('✅ Localized ANAM_CONFIG with ajaxUrl and nonce');
+        } else {
+            error_log('❌ Hook does not match anam pattern: ' . $hook);
         }
         
         // Enqueue on Getting Started page
@@ -915,6 +896,11 @@ class AnamAdminSettings {
         let conversationTranscript = [];
         let currentSessionId = null;
         
+        // Missing function that's being called - add placeholder
+        function showElementTokenIcon(success) {
+            console.log('showElementTokenIcon called with:', success);
+            // This function was being called but didn't exist, causing the ReferenceError
+        }
         
         // Helper function to extract session ID from token (if possible)
         function extractSessionIdFromToken(token) {
@@ -994,6 +980,103 @@ class AnamAdminSettings {
                 }
             } catch (error) {
                 console.error('❌ Failed to store session ID on server:', error);
+            }
+        }
+        
+        // Real-time message sending to server
+        async function sendMessageToServer(messageData) {
+            if (!currentSessionId) {
+                console.log('⚠️ No session ID available for message sending');
+                return;
+            }
+            
+            try {
+                console.log('📤 Sending message to server:', messageData);
+                console.log('📤 Session ID:', currentSessionId);
+                console.log('📤 Nonce:', ANAM_CONFIG.nonce);
+                
+                const response = await fetch(ANAM_CONFIG.ajaxUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        action: 'anam_store_message',
+                        nonce: ANAM_CONFIG.nonce,
+                        session_id: currentSessionId,
+                        message_data: JSON.stringify(messageData),
+                        timestamp: messageData.timestamp
+                    })
+                });
+                
+                console.log('📤 Response status:', response.status);
+                const data = await response.json();
+                console.log('📤 Response data:', data);
+                
+                if (data.success) {
+                    console.log('✅ Message stored:', data.data);
+                } else {
+                    console.error('❌ Message storage error:', data.data);
+                }
+            } catch (error) {
+                console.error('❌ Failed to send message to server:', error);
+            }
+        }
+        
+        // Mark conversation as complete
+        async function markConversationComplete() {
+            if (!currentSessionId) return;
+            
+            try {
+                console.log('🏁 Marking conversation complete for session:', currentSessionId);
+                
+                const response = await fetch(ANAM_CONFIG.ajaxUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        action: 'anam_conversation_complete',
+                        nonce: ANAM_CONFIG.nonce,
+                        session_id: currentSessionId,
+                        transcript: JSON.stringify(conversationTranscript)
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    console.log('✅ Conversation marked complete:', data.data);
+                } else {
+                    console.error('❌ Conversation completion error:', data.data);
+                }
+            } catch (error) {
+                console.error('❌ Failed to mark conversation complete:', error);
+            }
+        }
+        
+        // Finalize conversation (session ended)
+        async function finalizeConversation() {
+            if (!currentSessionId) return;
+            
+            try {
+                console.log('🔚 Finalizing conversation for session:', currentSessionId);
+                
+                // Send final transcript and trigger parsing
+                const response = await fetch(ANAM_CONFIG.ajaxUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        action: 'anam_finalize_conversation',
+                        nonce: ANAM_CONFIG.nonce,
+                        session_id: currentSessionId,
+                        transcript: JSON.stringify(conversationTranscript)
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    console.log('✅ Conversation finalized and parsed:', data.data);
+                } else {
+                    console.error('❌ Conversation finalization error:', data.data);
+                }
+            } catch (error) {
+                console.error('❌ Failed to finalize conversation:', error);
             }
         }
         
@@ -1608,7 +1691,7 @@ class AnamAdminSettings {
             
             try {
                 const formData = new FormData();
-                formData.append('action', 'anam_session_token');
+                formData.append('action', 'anam_get_session_token');
                 formData.append('nonce', ANAM_CONFIG.nonce);
                 
                 const response = await fetch(ANAM_CONFIG.ajaxUrl, {
@@ -1644,27 +1727,12 @@ class AnamAdminSettings {
                 anamClient = createClient(sessionToken);
                 console.log('✅ Client created:', anamClient);
                 
-                // Add transcript capture event listener
-                anamClient.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages) => {
-                    conversationTranscript = messages;
-                    console.log('📝 Transcript updated:', messages.length, 'messages');
-                });
-                
-                // Add listener for when streaming starts (session ID might be available then)
+                // Simple session ID capture - no real-time transcript needed
                 anamClient.addListener(AnamEvent.STREAM_STARTED, () => {
-                    console.log('🎬 Stream started, checking for session ID again...');
-                    if (!currentSessionId) {
-                        try {
-                            if (anamClient.sessionId) {
-                                currentSessionId = anamClient.sessionId;
-                                console.log('📋 Session ID captured after stream start:', currentSessionId);
-                            } else if (anamClient.session && anamClient.session.id) {
-                                currentSessionId = anamClient.session.id;
-                                console.log('📋 Session ID captured from session after stream start:', currentSessionId);
-                            }
-                        } catch (error) {
-                            console.error('❌ Error capturing session ID after stream start:', error);
-                        }
+                    console.log('🎬 Stream started');
+                    if (anamClient.sessionId) {
+                        currentSessionId = anamClient.sessionId;
+                        console.log('📋 Session ID captured:', currentSessionId);
                     }
                 });
                 
@@ -1984,7 +2052,8 @@ class AnamAdminSettings {
             return;
         }
         
-        $api_key = sanitize_text_field($_POST['api_key']);
+        // Don't sanitize - base64 strings have special characters
+        $api_key = isset($_POST['api_key']) ? trim($_POST['api_key']) : '';
         
         if (empty($api_key)) {
             wp_send_json_error('API key is required');
@@ -2149,12 +2218,261 @@ class AnamAdminSettings {
                     'sessionToken' => $data['sessionToken']
                 ));
             } else {
-                wp_send_json_error('No session token in response: ' . $response_body);
+                wp_send_json_error('Invalid response format');
             }
         } else {
-            wp_send_json_error('Session token request failed with status: ' . $response_code . '. Response: ' . $response_body);
+            wp_send_json_error('Session token request failed');
         }
     }
+
+    /**
+     * AJAX handler to get session data from Anam API
+     */
+    public function get_session_data() {
+        if (!wp_verify_nonce($_POST['nonce'], 'anam_session')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+
+        $session_id = sanitize_text_field($_POST['session_id']);
+        if (empty($session_id)) {
+            wp_send_json_error('No session ID provided');
+            return;
+        }
+
+        $api_key = get_option('anam_api_key');
+        if (empty($api_key)) {
+            wp_send_json_error('API key not configured');
+            return;
+        }
+
+        // Call Anam API to get session data
+        $response = wp_remote_get("https://api.anam.ai/v1/sessions/{$session_id}", array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'timeout' => 30
+        ));
+
+        if (is_wp_error($response)) {
+            wp_send_json_error('API request failed: ' . $response->get_error_message());
+            return;
+        }
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+
+        if ($response_code === 200) {
+            $session_data = json_decode($response_body, true);
+            
+            // Parse vehicle data from transcript
+            $vehicle_data = $this->parse_vehicle_data($session_data);
+            
+            wp_send_json_success(array(
+                'session_data' => $session_data,
+                'vehicle_data' => $vehicle_data,
+                'transcript' => isset($session_data['transcript']) ? $session_data['transcript'] : 'No transcript available'
+            ));
+        } else {
+            wp_send_json_error('Failed to fetch session data: HTTP ' . $response_code);
+        }
+    }
+
+    /**
+     * Parse vehicle data from session transcript
+     */
+    private function parse_vehicle_data($session_data) {
+        if (!isset($session_data['transcript']) || empty($session_data['transcript'])) {
+            return array('error' => 'No transcript data available');
+        }
+
+        $transcript = is_array($session_data['transcript']) ? 
+            implode(' ', array_column($session_data['transcript'], 'text')) : 
+            $session_data['transcript'];
+
+        $vehicle_data = array();
+
+        // VIN pattern (17 characters, alphanumeric)
+        if (preg_match('/\b[A-HJ-NPR-Z0-9]{17}\b/i', $transcript, $matches)) {
+            $vehicle_data['vin'] = strtoupper($matches[0]);
+        }
+
+        // Year pattern (4 digits, 1900-2030)
+        if (preg_match('/\b(19|20)\d{2}\b/', $transcript, $matches)) {
+            $vehicle_data['year'] = $matches[0];
+        }
+
+        // Make pattern (common car manufacturers)
+        $makes = array('toyota', 'honda', 'ford', 'chevrolet', 'nissan', 'bmw', 'mercedes', 'audi', 'volkswagen', 'hyundai', 'kia', 'mazda', 'subaru', 'lexus', 'acura', 'infiniti', 'cadillac', 'buick', 'gmc', 'jeep', 'ram', 'dodge', 'chrysler', 'lincoln', 'volvo', 'jaguar', 'land rover', 'porsche', 'tesla', 'mitsubishi');
+        foreach ($makes as $make) {
+            if (preg_match('/\b' . preg_quote($make, '/') . '\b/i', $transcript)) {
+                $vehicle_data['make'] = ucfirst($make);
+                break;
+            }
+        }
+
+        // Model pattern (word after make, if make found)
+        if (isset($vehicle_data['make'])) {
+            $pattern = '/\b' . preg_quote($vehicle_data['make'], '/') . '\s+([a-z0-9\-]+)/i';
+            if (preg_match($pattern, $transcript, $matches)) {
+                $vehicle_data['model'] = ucfirst($matches[1]);
+            }
+        }
+
+        return empty($vehicle_data) ? array('error' => 'No vehicle data found in transcript') : $vehicle_data;
+    }
+
+    /**
+     * AJAX handler to list sessions from Anam API
+     */
+    public function list_sessions() {
+        // Verify nonce
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+
+        // Get saved credentials
+        $options = get_option('anam_options', array());
+        $api_key = isset($options['api_key']) ? $options['api_key'] : '';
+        $auth_token = isset($options['auth_token']) ? $options['auth_token'] : '';
+
+        // Debug logging
+        error_log('List Sessions - API Key: ' . (empty($api_key) ? 'EMPTY' : 'Present (length: ' . strlen($api_key) . ')'));
+        error_log('List Sessions - Auth Token: ' . (empty($auth_token) ? 'EMPTY' : 'Present (length: ' . strlen($auth_token) . ')'));
+
+        if (empty($api_key)) {
+            wp_send_json_error('API Key not configured. Please add your API Key in Avatar Setup.');
+            return;
+        }
+
+        if (empty($auth_token)) {
+            wp_send_json_error('Auth Token not configured. Please add your Auth Token in Avatar Setup.');
+            return;
+        }
+        
+        // The API key IS the base64 encoded bearer token - use it directly
+        $bearer_token = $api_key;
+
+        // Get pagination parameters
+        $page = isset($_POST['page']) ? intval($_POST['page']) : 1;
+        $per_page = isset($_POST['perPage']) ? intval($_POST['perPage']) : 10;
+
+        // Build API URL - use apiKeyId parameter, not personaId
+        $api_url = 'https://api.anam.ai/v1/sessions?page=' . $page . '&perPage=' . $per_page . '&apiKeyId=' . urlencode($auth_token);
+        
+        error_log('List Sessions - API URL: ' . $api_url);
+
+        // Make request to Anam API
+        $response = wp_remote_get($api_url, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $bearer_token,
+                'Content-Type' => 'application/json'
+            ),
+            'timeout' => 15
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('List Sessions - WP Error: ' . $response->get_error_message());
+            wp_send_json_error('Failed to fetch sessions: ' . $response->get_error_message());
+            return;
+        }
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+
+        error_log('List Sessions - Status Code: ' . $status_code);
+        error_log('List Sessions - Raw Body: ' . substr($body, 0, 500)); // First 500 chars
+
+        if ($status_code !== 200) {
+            error_log('List Sessions - Non-200 status, full body: ' . $body);
+            wp_send_json_error('API returned error: ' . $status_code . ' - ' . $body);
+            return;
+        }
+
+        $data = json_decode($body, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('List Sessions - JSON Error: ' . json_last_error_msg());
+            wp_send_json_error('Failed to parse API response: ' . json_last_error_msg());
+            return;
+        }
+
+        // Debug: Log the parsed response structure
+        error_log('List Sessions - Parsed data keys: ' . implode(', ', array_keys($data)));
+        if (isset($data['data'])) {
+            error_log('List Sessions - Sessions count: ' . count($data['data']));
+        }
+
+        wp_send_json_success($data);
+    }
+
 }
 
+
 new AnamAdminSettings();
+
+/**
+ * Render the sessions page with sessions list
+ */
+function anam_render_sessions_page() {
+    $options = get_option('anam_options', array());
+    $api_key = isset($options['api_key']) ? $options['api_key'] : '';
+    $persona_id = isset($options['persona_id']) ? $options['persona_id'] : '';
+    
+    ?>
+    <div class="wrap">
+        <h1>💬 Chat Transcripts</h1>
+        
+        <?php if (empty($api_key) || empty($persona_id)): ?>
+            <div class="notice notice-warning">
+                <p><strong>Configuration Required:</strong> Please configure your API Key and Persona ID in <a href="<?php echo admin_url('admin.php?page=anam-settings'); ?>">Avatar Setup</a> first.</p>
+            </div>
+        <?php else: ?>
+            <div class="notice notice-info">
+                <p>Displaying sessions for Persona ID: <code><?php echo esc_html($persona_id); ?></code></p>
+            </div>
+            
+            <div id="sessions-loading" style="text-align: center; padding: 40px;">
+                <div class="anam-spinner" style="margin: 0 auto 20px; width: 50px; height: 50px; border: 5px solid #f3f3f3; border-top: 5px solid #0073aa; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                <p>Loading sessions...</p>
+            </div>
+            
+            <div id="sessions-error" style="display: none;">
+                <div class="notice notice-error">
+                    <p id="sessions-error-message"></p>
+                </div>
+            </div>
+            
+            <div id="sessions-container" style="display: none;">
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th style="width: 300px;">Session ID</th>
+                            <th style="width: 150px;">Created At</th>
+                            <th style="width: 150px;">Updated At</th>
+                            <th>Client Label</th>
+                            <th style="width: 100px; text-align: center;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sessions-list">
+                        <!-- Sessions will be loaded here -->
+                    </tbody>
+                </table>
+                
+                <div id="sessions-pagination" style="margin-top: 20px; text-align: center;">
+                    <!-- Pagination will be loaded here -->
+                </div>
+            </div>
+        <?php endif; ?>
+        
+        <style>
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        </style>
+    </div>
+    <?php
+}

@@ -122,6 +122,17 @@ class AnamTranscriptHandler {
             add_action('wp_ajax_nopriv_anam_process_transcript', array($this, 'handle_transcript_processing'));
         }
         
+        // Real-time message handling
+        add_action('wp_ajax_anam_store_message', array($this, 'handle_store_message'));
+        add_action('wp_ajax_nopriv_anam_store_message', array($this, 'handle_store_message'));
+        
+        // Conversation lifecycle handlers
+        add_action('wp_ajax_anam_conversation_complete', array($this, 'handle_conversation_complete'));
+        add_action('wp_ajax_nopriv_anam_conversation_complete', array($this, 'handle_conversation_complete'));
+        
+        add_action('wp_ajax_anam_finalize_conversation', array($this, 'handle_finalize_conversation'));
+        add_action('wp_ajax_nopriv_anam_finalize_conversation', array($this, 'handle_finalize_conversation'));
+        
         // Add cron handler only if method exists
         if (method_exists($this, 'process_with_parser_tool')) {
             add_action('anam_process_with_parser_tool', array($this, 'process_with_parser_tool'));
@@ -464,7 +475,12 @@ class AnamTranscriptHandler {
         $conversation_id = $wpdb->insert_id;
         
         // Schedule background processing (parser tool will fetch from Anam.ai API)
-        wp_schedule_single_event(time() + 10, 'anam_process_with_parser_tool', array($conversation_id));
+        // IMMEDIATE processing for testing - change back to 60 later
+        wp_schedule_single_event(time() + 5, 'anam_process_with_parser_tool', array($conversation_id));
+        
+        // Also try immediate processing for debugging
+        error_log('Anam: Scheduling immediate processing for conversation ' . $conversation_id);
+        wp_schedule_single_event(time() + 1, 'anam_process_with_parser_tool', array($conversation_id));
         
         wp_send_json_success(array(
             'message' => 'Session ID received and queued for processing',
@@ -639,16 +655,20 @@ class AnamTranscriptHandler {
     public function process_with_parser_tool($conversation_id) {
         global $wpdb;
         
+        error_log("🚀 ANAM DEBUG: Starting process_with_parser_tool for conversation ID: $conversation_id");
+        
         // Get conversation from database
         $conversation = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$this->table_name} WHERE id = %d AND status = 'pending'",
+            "SELECT * FROM {$this->table_name} WHERE id = %d",
             $conversation_id
         ));
         
         if (!$conversation) {
-            error_log("Anam: Conversation $conversation_id not found or already processed");
+            error_log("❌ ANAM DEBUG: Conversation $conversation_id not found in database");
             return;
         }
+        
+        error_log("✅ ANAM DEBUG: Found conversation - Status: {$conversation->status}, Session ID: {$conversation->session_id}");
         
         // Update status to processing
         $wpdb->update(
@@ -676,7 +696,12 @@ class AnamTranscriptHandler {
         
         // Fetch transcript from Anam.ai API using session ID
         $session_id = $conversation->session_id;
-        $anam_response = wp_remote_get("https://api.anam.ai/v1/sessions/{$session_id}/transcript", array(
+        $api_url = "https://api.anam.ai/v1/sessions/{$session_id}/transcript";
+        
+        error_log("🌐 ANAM DEBUG: Calling API: $api_url");
+        error_log("🔑 ANAM DEBUG: Using API key: " . substr($anam_api_key, 0, 10) . "...");
+        
+        $anam_response = wp_remote_get($api_url, array(
             'headers' => array(
                 'Authorization' => 'Bearer ' . $anam_api_key,
                 'Content-Type' => 'application/json',
@@ -685,13 +710,22 @@ class AnamTranscriptHandler {
         ));
         
         if (is_wp_error($anam_response)) {
-            $this->mark_conversation_error($conversation_id, 'Failed to fetch transcript from Anam.ai: ' . $anam_response->get_error_message());
+            $error_msg = 'Failed to fetch transcript from Anam.ai: ' . $anam_response->get_error_message();
+            error_log("❌ ANAM DEBUG: " . $error_msg);
+            $this->mark_conversation_error($conversation_id, $error_msg);
             return;
         }
         
         $anam_status = wp_remote_retrieve_response_code($anam_response);
+        $response_body = wp_remote_retrieve_body($anam_response);
+        
+        error_log("📡 ANAM DEBUG: API Response Status: $anam_status");
+        error_log("📄 ANAM DEBUG: API Response Body: " . substr($response_body, 0, 500) . "...");
+        
         if ($anam_status !== 200) {
-            $this->mark_conversation_error($conversation_id, 'Anam.ai API returned status: ' . $anam_status);
+            $error_msg = "Anam.ai API returned status: $anam_status - Body: $response_body";
+            error_log("❌ ANAM DEBUG: " . $error_msg);
+            $this->mark_conversation_error($conversation_id, $error_msg);
             return;
         }
         
@@ -912,6 +946,144 @@ class AnamTranscriptHandler {
             error_log('Anam: Supabase error ' . $response_code . ': ' . $response_body);
             return array('success' => false, 'message' => 'Supabase error: ' . $response_code);
         }
+    }
+    
+    /**
+     * Handle real-time message storage
+     */
+    public function handle_store_message() {
+        if (!wp_verify_nonce($_POST['nonce'], 'anam_session')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = sanitize_text_field($_POST['session_id']);
+        $message_data = $_POST['message_data'];
+        $timestamp = sanitize_text_field($_POST['timestamp']);
+        
+        if (empty($session_id)) {
+            wp_send_json_error('No session ID provided');
+            return;
+        }
+        
+        global $wpdb;
+        
+        // Update or create conversation record with message data
+        $existing = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$this->table_name} WHERE session_id = %s",
+            $session_id
+        ));
+        
+        if ($existing) {
+            // Update existing record with new message
+            $current_messages = json_decode($existing->transcript_raw, true) ?: [];
+            $current_messages[] = json_decode($message_data, true);
+            
+            $wpdb->update(
+                $this->table_name,
+                array('transcript_raw' => json_encode($current_messages)),
+                array('session_id' => $session_id),
+                array('%s'),
+                array('%s')
+            );
+        } else {
+            // Create new record
+            $wpdb->insert(
+                $this->table_name,
+                array(
+                    'session_id' => $session_id,
+                    'transcript_raw' => json_encode([json_decode($message_data, true)]),
+                    'status' => 'active',
+                    'created_at' => current_time('mysql')
+                ),
+                array('%s', '%s', '%s', '%s')
+            );
+        }
+        
+        wp_send_json_success('Message stored successfully');
+    }
+    
+    /**
+     * Handle conversation completion
+     */
+    public function handle_conversation_complete() {
+        if (!wp_verify_nonce($_POST['nonce'], 'anam_session')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = sanitize_text_field($_POST['session_id']);
+        $transcript = $_POST['transcript'];
+        
+        if (empty($session_id)) {
+            wp_send_json_error('No session ID provided');
+            return;
+        }
+        
+        global $wpdb;
+        
+        // Update conversation status
+        $wpdb->update(
+            $this->table_name,
+            array(
+                'status' => 'completed',
+                'transcript_raw' => $transcript
+            ),
+            array('session_id' => $session_id),
+            array('%s', '%s'),
+            array('%s')
+        );
+        
+        wp_send_json_success('Conversation marked as complete');
+    }
+    
+    /**
+     * Handle conversation finalization and parsing
+     */
+    public function handle_finalize_conversation() {
+        if (!wp_verify_nonce($_POST['nonce'], 'anam_session')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = sanitize_text_field($_POST['session_id']);
+        $transcript = $_POST['transcript'];
+        
+        if (empty($session_id)) {
+            wp_send_json_error('No session ID provided');
+            return;
+        }
+        
+        global $wpdb;
+        
+        // Parse vehicle data from transcript
+        $transcript_data = json_decode($transcript, true);
+        $transcript_text = $this->convert_transcript_to_plain_text($transcript_data);
+        $parsed_data = $this->parse_vehicle_data($transcript_text);
+        
+        // Update conversation with final data
+        $wpdb->update(
+            $this->table_name,
+            array(
+                'status' => 'processed',
+                'transcript_raw' => $transcript,
+                'transcript_plain' => $transcript_text,
+                'parsed_data' => json_encode($parsed_data),
+                'review_status' => 'pending',
+                'processed_at' => current_time('mysql')
+            ),
+            array('session_id' => $session_id),
+            array('%s', '%s', '%s', '%s', '%s', '%s'),
+            array('%s')
+        );
+        
+        // Send email notification if enabled
+        $this->send_email_notification($wpdb->insert_id, $parsed_data);
+        
+        wp_send_json_success(array(
+            'message' => 'Conversation finalized and parsed',
+            'parsed_data' => $parsed_data
+        ));
     }
 }
 

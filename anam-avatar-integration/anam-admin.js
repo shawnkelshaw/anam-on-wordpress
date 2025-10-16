@@ -18,162 +18,6 @@ jQuery(document).ready(function($) {
         return (!apiKey || apiKey.trim() === '') && !isVerified;
     }
     
-    function updateFieldStates() {
-        const apiKey = $('#anam-api-key').val();
-        const isVerified = checkApiVerified();
-        const isInitialCondition = checkInitialCondition();
-        
-        console.log('🔧 updateFieldStates called');
-        console.log('  - API Key:', apiKey);
-        console.log('  - Is Initial Condition:', isInitialCondition);
-        console.log('  - Is Verified:', isVerified);
-        console.log('  - Dependent fields found:', $('.anam-dependent-field').length);
-        console.log('  - Verify button found:', $('#verify-api-key').length);
-        console.log('  - Save button found:', $('#anam-save-settings').length);
-        console.log('  - Reset button found:', $('#anam-reset-all').length);
-        
-        // Initial condition: No API key entered
-        if (isInitialCondition) {
-            console.log('  → Applying INITIAL CONDITION state');
-            $('.anam-dependent-field').prop('disabled', true).css('opacity', '0.5');
-            $('#verify-api-key').prop('disabled', true);
-            $('#anam-save-settings').prop('disabled', true);
-            $('#anam-reset-all').prop('disabled', true);
-        }
-        // API key entered but not verified
-        else if (!isVerified) {
-            console.log('  → Applying API KEY ENTERED state');
-            $('.anam-dependent-field').prop('disabled', true).css('opacity', '0.5');
-            $('#verify-api-key').prop('disabled', false);
-            $('#anam-save-settings').prop('disabled', true);
-            $('#anam-reset-all').prop('disabled', false);
-        }
-        // API verified
-        else {
-            console.log('  → Applying API VERIFIED state');
-            $('.anam-dependent-field').prop('disabled', false).css('opacity', '1');
-            $('#verify-api-key').prop('disabled', false);
-            $('#anam-save-settings').prop('disabled', false);
-            $('#anam-reset-all').prop('disabled', false);
-        }
-    }
-    
-    // ============================================================================
-    // API VERIFICATION
-    // ============================================================================
-    
-    function runVerificationWithModal() {
-        const apiKey = $('#anam-api-key').val();
-        
-        if (!apiKey || apiKey.trim() === '') {
-            alert('Please enter an API key first.');
-            return;
-        }
-        
-        const modal = $('#anam-verification-modal');
-        const startTime = Date.now();
-        
-        // Show modal
-        modal.css('display', 'flex');
-        
-        // Run verification
-        $.ajax({
-            url: anam_ajax.ajax_url,
-            type: 'POST',
-            data: {
-                action: 'anam_verify_api',
-                nonce: anam_ajax.nonce,
-                api_key: apiKey
-            },
-            success: function(response) {
-                const elapsed = Date.now() - startTime;
-                const remainingTime = Math.max(0, 4000 - elapsed);
-                
-                setTimeout(function() {
-                    modal.hide();
-                    
-                    if (response.success) {
-                        $('#api-status').html('✅ Verified').css('color', '#46b450');
-                        
-                        const successNotice = $('<div class="notice notice-success is-dismissible"><p>✅ Anam API Key verified</p></div>')
-                            .insertAfter('.wrap h1');
-                        
-                        successNotice.append('<button type="button" class="notice-dismiss"><span class="screen-reader-text">Dismiss this notice.</span></button>');
-                        successNotice.find('.notice-dismiss').on('click', function() {
-                            successNotice.fadeOut(function() { $(this).remove(); });
-                        });
-                        
-                        // Enable fields
-                        updateFieldStates();
-                        
-                    } else {
-                        $('#api-status').html('❌ Not verified').css('color', '#dc3545');
-                        
-                        const errorMsg = response.data && response.data.message ? response.data.message : (response.data || 'Unknown error');
-                        const errorNotice = $('<div class="notice notice-error is-dismissible"><p>❌ Anam API Key error: ' + errorMsg + '</p></div>')
-                            .insertAfter('.wrap h1');
-                        
-                        errorNotice.append('<button type="button" class="notice-dismiss"><span class="screen-reader-text">Dismiss this notice.</span></button>');
-                        errorNotice.find('.notice-dismiss').on('click', function() {
-                            errorNotice.fadeOut(function() { $(this).remove(); });
-                        });
-                        
-                        // Disable fields
-                        updateFieldStates();
-                    }
-                }, remainingTime);
-            },
-            error: function(xhr, status, error) {
-                modal.hide();
-                $('#api-status').html('❌ Not verified').css('color', '#dc3545');
-                alert('Verification failed: ' + error);
-                updateFieldStates();
-            }
-        });
-    }
-    
-    // Verify button click
-    $('#verify-api-key').on('click', runVerificationWithModal);
-    
-    // API key input change - update button states
-    $('#anam-api-key').on('input', updateFieldStates);
-    
-    // ============================================================================
-    // RESET ALL FUNCTIONALITY
-    // ============================================================================
-    
-    function performReset() {
-        // Clear Avatar Configuration fields
-        $('#anam-api-key').val('');
-        $('#api-status').html('❌ Not verified').css('color', '#dc3545');
-        $('input[name="anam_options[persona_id]"]').val('');
-        $('input[name="anam_options[avatar_id]"]').val('');
-        $('input[name="anam_options[voice_id]"]').val('');
-        $('select[name="anam_options[llm_id]"]').val('default');
-        $('textarea[name="anam_options[system_prompt]"]').val('');
-        
-        // Update states
-        updateFieldStates();
-        
-        // Focus on API key
-        $('#anam-api-key').focus();
-    }
-    
-    // Reset All button click
-    $('#anam-reset-all').on('click', function() {
-        $('#anam-reset-modal').css('display', 'flex');
-    });
-    
-    // Reset modal - Cancel
-    $('#anam-reset-cancel').on('click', function() {
-        $('#anam-reset-modal').hide();
-    });
-    
-    // Reset modal - Confirm
-    $('#anam-reset-confirm').on('click', function() {
-        $('#anam-reset-modal').hide();
-        performReset();
-    });
     
     // ============================================================================
     // DISPLAY METHOD TOGGLE (Display Settings Page)
@@ -243,15 +87,170 @@ jQuery(document).ready(function($) {
     toggleSupabaseFields(); // Initialize
     
     // ============================================================================
+    // DATABASE SETTINGS VALIDATION
+    // ============================================================================
+    
+    function validateDatabaseSettings() {
+        // Only run on Database Integration page
+        const supabaseUrlField = $('input[name="anam_options[supabase_url]"]');
+        if (supabaseUrlField.length === 0) return; // Not on the right page
+        
+        const supabaseUrl = supabaseUrlField.val() ? supabaseUrlField.val().trim() : '';
+        const supabaseKey = $('input[name="anam_options[supabase_key]"]').val() ? $('input[name="anam_options[supabase_key]"]').val().trim() : '';
+        const supabaseTable = $('input[name="anam_options[supabase_table]"]').val() ? $('input[name="anam_options[supabase_table]"]').val().trim() : '';
+        const submitButton = $('#anam-supabase-submit');
+        
+        if (submitButton.length === 0) return; // Submit button not found
+        
+        // Check if all required fields have values
+        const allFieldsFilled = supabaseUrl && supabaseKey && supabaseTable;
+        
+        if (allFieldsFilled) {
+            submitButton.prop('disabled', false).removeClass('disabled');
+        } else {
+            submitButton.prop('disabled', true).addClass('disabled');
+        }
+    }
+    
+    // Bind validation to input changes on Database Integration page
+    $(document).on('input keyup', 'input[name="anam_options[supabase_url]"], input[name="anam_options[supabase_key]"], input[name="anam_options[supabase_table]"]', validateDatabaseSettings);
+    
+    // ============================================================================
+    // SESSIONS LIST (Chat Transcripts Page)
+    // ============================================================================
+    
+    function loadSessions(page = 1, perPage = 10) {
+        // Only run on sessions page
+        if ($('#sessions-container').length === 0) return;
+        
+        // Check if ANAM_CONFIG exists
+        if (typeof ANAM_CONFIG === 'undefined') {
+            console.error('❌ ANAM_CONFIG is not defined!');
+            $('#sessions-loading').hide();
+            $('#sessions-error-message').text('Configuration error: ANAM_CONFIG not loaded. Please refresh the page.');
+            $('#sessions-error').show();
+            return;
+        }
+        
+        console.log('✅ ANAM_CONFIG found:', ANAM_CONFIG);
+        console.log('📤 Requesting sessions - page:', page, 'perPage:', perPage);
+        
+        $('#sessions-loading').show();
+        $('#sessions-error').hide();
+        $('#sessions-container').hide();
+        
+        $.ajax({
+            url: ANAM_CONFIG.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'anam_list_sessions',
+                nonce: ANAM_CONFIG.nonce,
+                page: page,
+                perPage: perPage
+            },
+            success: function(response) {
+                $('#sessions-loading').hide();
+                
+                console.log('🔍 Sessions API Response:', response);
+                
+                if (response.success && response.data) {
+                    const data = response.data;
+                    console.log('📊 Response data:', data);
+                    console.log('📊 Data keys:', Object.keys(data));
+                    
+                    const sessions = data.data || [];
+                    const meta = data.meta || {};
+                    
+                    console.log('📋 Sessions array:', sessions);
+                    console.log('📋 Sessions count:', sessions.length);
+                    console.log('📋 Meta:', meta);
+                    
+                    if (sessions.length === 0) {
+                        $('#sessions-error-message').text('No sessions found. API returned empty data array.');
+                        $('#sessions-error').show();
+                        return;
+                    }
+                    
+                    // Build sessions table
+                    let html = '';
+                    sessions.forEach(function(session) {
+                        const createdAt = session.createdAt ? new Date(session.createdAt).toLocaleString() : 'N/A';
+                        const updatedAt = session.updatedAt ? new Date(session.updatedAt).toLocaleString() : 'N/A';
+                        const clientLabel = session.clientLabel || 'N/A';
+                        const sessionId = session.id || 'N/A';
+                        
+                        html += '<tr>';
+                        html += '<td><code>' + sessionId + '</code></td>';
+                        html += '<td>' + createdAt + '</td>';
+                        html += '<td>' + updatedAt + '</td>';
+                        html += '<td>' + clientLabel + '</td>';
+                        html += '<td style="text-align: center;"><button class="button button-small view-session" data-session-id="' + sessionId + '">View</button></td>';
+                        html += '</tr>';
+                    });
+                    
+                    $('#sessions-list').html(html);
+                    
+                    // Build pagination
+                    if (meta.total > 0) {
+                        let paginationHtml = '<div style="display: flex; justify-content: space-between; align-items: center;">';
+                        paginationHtml += '<div>Showing ' + sessions.length + ' of ' + meta.total + ' sessions</div>';
+                        paginationHtml += '<div>';
+                        
+                        if (meta.currentPage > 1) {
+                            paginationHtml += '<button class="button sessions-page-btn" data-page="' + (meta.currentPage - 1) + '">Previous</button> ';
+                        }
+                        
+                        paginationHtml += '<span style="margin: 0 10px;">Page ' + meta.currentPage + ' of ' + meta.lastPage + '</span>';
+                        
+                        if (meta.currentPage < meta.lastPage) {
+                            paginationHtml += ' <button class="button sessions-page-btn" data-page="' + (meta.currentPage + 1) + '">Next</button>';
+                        }
+                        
+                        paginationHtml += '</div></div>';
+                        $('#sessions-pagination').html(paginationHtml);
+                    }
+                    
+                    $('#sessions-container').show();
+                } else {
+                    $('#sessions-error-message').text(response.data || 'Failed to load sessions');
+                    $('#sessions-error').show();
+                }
+            },
+            error: function(xhr, status, error) {
+                $('#sessions-loading').hide();
+                $('#sessions-error-message').text('Error loading sessions: ' + error);
+                $('#sessions-error').show();
+            }
+        });
+    }
+    
+    // Pagination click handler
+    $(document).on('click', '.sessions-page-btn', function() {
+        const page = $(this).data('page');
+        loadSessions(page, 10);
+    });
+    
+    // View session button (placeholder for future functionality)
+    $(document).on('click', '.view-session', function() {
+        const sessionId = $(this).data('session-id');
+        alert('View session details for: ' + sessionId + '\n\nThis feature will be implemented next.');
+    });
+    
+    // ============================================================================
     // INITIALIZE
     // ============================================================================
     
     // Delay initialization to ensure DOM is fully loaded
     setTimeout(function() {
-        console.log('🔍 Checking initial state...');
-        console.log('API Key value:', $('#anam-api-key').val());
-        console.log('API Status:', $('#api-status').text());
-        updateFieldStates();
+        console.log('🔍 Anam Admin initializing...');
+        validateDatabaseSettings(); // Check database settings validation
+        
+        // Load sessions if on sessions page
+        if ($('#sessions-container').length > 0) {
+            console.log('📋 Loading sessions...');
+            loadSessions();
+        }
+        
         console.log('✅ Anam Admin - Ready!');
     }, 100);
     
