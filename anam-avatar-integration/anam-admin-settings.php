@@ -38,7 +38,6 @@ class AnamAdminSettings {
         add_action('wp_ajax_anam_get_session_metadata', array($this, 'get_session_metadata'));
         add_action('wp_ajax_anam_save_transcript', array($this, 'save_transcript'));
         add_action('wp_ajax_nopriv_anam_save_transcript', array($this, 'save_transcript'));
-        add_action('wp_ajax_anam_toggle_notifications', array($this, 'toggle_notifications'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         
         // Create database table on plugin activation
@@ -2722,33 +2721,11 @@ class AnamAdminSettings {
     }
     
     /**
-     * AJAX handler to toggle notification checkbox
-     */
-    public function toggle_notifications() {
-        // Verify nonce
-        if (!check_ajax_referer('anam_toggle_notifications', 'nonce', false)) {
-            wp_send_json_error('Security check failed');
-            return;
-        }
-        
-        $enabled = isset($_POST['enabled']) && $_POST['enabled'] === '1';
-        
-        $options = get_option($this->option_name, array());
-        $options['notification_enabled'] = $enabled;
-        update_option($this->option_name, $options);
-        
-        wp_send_json_success(array(
-            'enabled' => $enabled,
-            'message' => $enabled ? 'Notifications enabled' : 'Notifications disabled'
-        ));
-    }
-    
-    /**
      * Send email notification when a session completes
      */
     private function send_session_notification($session_id, $message_count) {
         $options = get_option($this->option_name, array());
-        $notification_enabled = isset($options['notification_enabled']) ? $options['notification_enabled'] : false;
+        $notification_enabled = isset($options['notification_enabled']) && $options['notification_enabled'] == '1';
         $notification_email = isset($options['notification_email']) ? trim($options['notification_email']) : '';
         
         // Skip if notifications are disabled or no email configured
@@ -2797,19 +2774,19 @@ function anam_render_sessions_page() {
     $api_key = isset($options['api_key']) ? $options['api_key'] : '';
     $persona_id = isset($options['persona_id']) ? $options['persona_id'] : '';
     
-    $notification_enabled = isset($options['notification_enabled']) ? $options['notification_enabled'] : false;
+    $notification_enabled = isset($options['notification_enabled']) && $options['notification_enabled'] == '1';
     $notification_email = isset($options['notification_email']) ? $options['notification_email'] : get_option('admin_email');
     
-    // Handle notification email update
-    if (isset($_POST['anam_update_notification_email']) && check_admin_referer('anam_notification_email')) {
-        $enabled = isset($_POST['notification_enabled']) ? true : false;
+    // Handle notification settings update
+    if (isset($_POST['anam_save_notification_settings']) && check_admin_referer('anam_notification_settings')) {
+        $enabled = isset($_POST['notification_enabled']) ? '1' : '0';
         $new_email = isset($_POST['notification_email']) ? sanitize_email($_POST['notification_email']) : '';
         $options['notification_enabled'] = $enabled;
         $options['notification_email'] = $new_email;
         update_option('anam_options', $options);
-        $notification_enabled = $enabled;
+        $notification_enabled = ($enabled == '1');
         $notification_email = $new_email;
-        echo '<div class="notice notice-success is-dismissible"><p>Notification settings updated successfully!</p></div>';
+        echo '<div class="notice notice-success is-dismissible"><p>Notification settings saved successfully!</p></div>';
     }
     ?>
     <div class="wrap">
@@ -2823,51 +2800,47 @@ function anam_render_sessions_page() {
             </div>
             
             <div id="notification-accordion-content" style="display: none; padding: 20px;">
-                <div id="notification-saving-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); z-index: 9999; align-items: center; justify-content: center;">
-                    <div style="background: white; padding: 20px 40px; border-radius: 5px; text-align: center;">
-                        <div class="anam-spinner" style="margin: 0 auto 10px; width: 30px; height: 30px; border: 3px solid #f3f3f3; border-top: 3px solid #0073aa; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-                        <p style="margin: 0;">Saving...</p>
-                    </div>
-                </div>
-                
-                <div style="margin-bottom: 20px;">
-                    <label style="display: flex; align-items: center; font-weight: 600;">
-                        <input type="checkbox" 
-                               id="notification_enabled" 
-                               name="notification_enabled" 
-                               value="1"
-                               <?php checked($notification_enabled, true); ?>
-                               style="margin-right: 8px;" />
-                        Send email when chat sessions complete
-                    </label>
-                    <p class="description" style="margin: 8px 0 0 24px;">
-                        Receive an email notification with a direct link to view the transcript.
+                <form method="post" action="">
+                    <?php wp_nonce_field('anam_notification_settings'); ?>
+                    
+                    <table class="form-table" style="margin-top: 0;">
+                        <tr>
+                            <th scope="row" style="padding-top: 0;">
+                                <label for="notification_enabled">Enable Notifications</label>
+                            </th>
+                            <td style="padding-top: 0;">
+                                <label>
+                                    <input type="checkbox" 
+                                           id="notification_enabled" 
+                                           name="notification_enabled" 
+                                           value="1"
+                                           <?php checked($notification_enabled, true); ?> />
+                                    Send email when chat sessions complete
+                                </label>
+                                <p class="description">
+                                    Receive an email notification with a direct link to view the transcript.
+                                </p>
+                            </td>
+                        </tr>
+                        <tr id="email-row">
+                            <th scope="row">
+                                <label for="notification_email">Email Address</label>
+                            </th>
+                            <td>
+                                <input type="email" 
+                                       id="notification_email" 
+                                       name="notification_email" 
+                                       value="<?php echo esc_attr($notification_email); ?>" 
+                                       class="regular-text" 
+                                       placeholder="admin@example.com" />
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    <p class="submit">
+                        <input type="submit" name="anam_save_notification_settings" class="button button-primary" value="Save Notification Settings" />
                     </p>
-                </div>
-                
-                <div id="notification-email-settings" style="<?php echo $notification_enabled ? '' : 'display: none;'; ?>">
-                    <form method="post" action="" id="anam-notification-form">
-                        <?php wp_nonce_field('anam_notification_email'); ?>
-                        <table class="form-table" style="margin-top: 0;">
-                            <tr>
-                                <th scope="row" style="padding-top: 0;">
-                                    <label for="notification_email">Email Address</label>
-                                </th>
-                                <td style="padding-top: 0;">
-                                    <input type="email" 
-                                           id="notification_email" 
-                                           name="notification_email" 
-                                           value="<?php echo esc_attr($notification_email); ?>" 
-                                           class="regular-text" 
-                                           placeholder="admin@example.com" />
-                                </td>
-                            </tr>
-                        </table>
-                        <p class="submit" style="margin-top: 0;">
-                            <input type="submit" name="anam_update_notification_email" class="button button-primary" value="Save Email Address" />
-                        </p>
-                    </form>
-                </div>
+                </form>
             </div>
             
             <script>
@@ -2879,46 +2852,17 @@ function anam_render_sessions_page() {
                     icon.text(icon.text() === '▼' ? '▲' : '▼');
                 });
                 
-                // Save checkbox state immediately via AJAX
-                $('#notification_enabled').on('change', function() {
-                    const isChecked = $(this).is(':checked');
-                    
-                    // Show overlay
-                    $('#notification-saving-overlay').css('display', 'flex');
-                    
-                    $.ajax({
-                        url: ajaxurl,
-                        type: 'POST',
-                        data: {
-                            action: 'anam_toggle_notifications',
-                            nonce: '<?php echo wp_create_nonce('anam_toggle_notifications'); ?>',
-                            enabled: isChecked ? '1' : '0'
-                        },
-                        success: function(response) {
-                            // Hide overlay
-                            $('#notification-saving-overlay').fadeOut(200);
-                            
-                            if (response.success) {
-                                // Show/hide email settings
-                                if (isChecked) {
-                                    $('#notification-email-settings').slideDown(200);
-                                } else {
-                                    $('#notification-email-settings').slideUp(200);
-                                }
-                            } else {
-                                alert('Failed to save notification setting: ' + (response.data || 'Unknown error'));
-                                // Revert checkbox
-                                $('#notification_enabled').prop('checked', !isChecked);
-                            }
-                        },
-                        error: function() {
-                            $('#notification-saving-overlay').fadeOut(200);
-                            alert('Failed to save notification setting. Please try again.');
-                            // Revert checkbox
-                            $('#notification_enabled').prop('checked', !isChecked);
-                        }
-                    });
-                });
+                // Show/hide email field based on checkbox
+                function toggleEmailField() {
+                    if ($('#notification_enabled').is(':checked')) {
+                        $('#email-row').show();
+                    } else {
+                        $('#email-row').hide();
+                    }
+                }
+                
+                toggleEmailField();
+                $('#notification_enabled').on('change', toggleEmailField);
             });
             </script>
         </div>
