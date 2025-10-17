@@ -38,6 +38,7 @@ class AnamAdminSettings {
         add_action('wp_ajax_anam_get_session_metadata', array($this, 'get_session_metadata'));
         add_action('wp_ajax_anam_save_transcript', array($this, 'save_transcript'));
         add_action('wp_ajax_nopriv_anam_save_transcript', array($this, 'save_transcript'));
+        add_action('wp_ajax_anam_parse_transcript', array($this, 'parse_transcript'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
         
         // Create database table on plugin activation
@@ -76,6 +77,8 @@ class AnamAdminSettings {
             session_id varchar(255) NOT NULL,
             transcript_data longtext NOT NULL,
             message_count int(11) DEFAULT 0,
+            parsed tinyint(1) DEFAULT 0,
+            parsed_at datetime NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
@@ -329,25 +332,9 @@ class AnamAdminSettings {
         );
         
         add_settings_field(
-            'supabase_url',
-            'Supabase URL',
-            array($this, 'supabase_url_field'),
-            'anam-settings-supabase',
-            'anam_supabase_section'
-        );
-        
-        add_settings_field(
-            'supabase_key',
-            'Supabase API Key',
-            array($this, 'supabase_key_field'),
-            'anam-settings-supabase',
-            'anam_supabase_section'
-        );
-        
-        add_settings_field(
-            'supabase_table',
-            'Table Name',
-            array($this, 'supabase_table_field'),
+            'parser_endpoint_url',
+            'Parser Endpoint URL',
+            array($this, 'parser_endpoint_url_field'),
             'anam-settings-supabase',
             'anam_supabase_section'
         );
@@ -446,7 +433,7 @@ class AnamAdminSettings {
             <h1>🗄️ Database Integration</h1>
             
             <div class="notice notice-info">
-                <p><strong>Configure Supabase integration</strong> for storing parsed vehicle data. <a href="?page=anam-sessions">View Sessions →</a></p>
+                <p><strong>Configure your parser endpoint</strong> - This tool handles AI parsing and database storage automatically. <a href="?page=anam-sessions">View Sessions →</a></p>
             </div>
             
             <?php if (isset($_GET['settings-updated']) && $_GET['settings-updated']): ?>
@@ -479,7 +466,7 @@ class AnamAdminSettings {
     }
     
     public function supabase_section_callback() {
-        echo '<p>Configure Supabase database connection for storing parsed vehicle data. <a href="?page=anam-sessions">View Sessions →</a></p>';
+        echo '<p>Configure your parser endpoint URL. The parser handles AI analysis and database storage automatically. <a href="?page=anam-sessions">View Sessions →</a></p>';
     }
     
     public function api_key_field() {
@@ -670,25 +657,11 @@ class AnamAdminSettings {
         echo '<p class="description">Turn on to store parsed vehicle data in Supabase</p>';
     }
     
-    public function supabase_url_field() {
+    public function parser_endpoint_url_field() {
         $options = get_option($this->option_name, array());
-        $value = isset($options['supabase_url']) ? $options['supabase_url'] : '';
-        echo '<input type="url" name="' . $this->option_name . '[supabase_url]" value="' . esc_attr($value) . '" class="regular-text supabase-field" placeholder="https://your-project.supabase.co" />';
-        echo '<p class="description">Your Supabase project URL (e.g., https://xxxxx.supabase.co)</p>';
-    }
-    
-    public function supabase_key_field() {
-        $options = get_option($this->option_name, array());
-        $value = isset($options['supabase_key']) ? $options['supabase_key'] : '';
-        echo '<input type="password" name="' . $this->option_name . '[supabase_key]" value="' . esc_attr($value) . '" class="regular-text supabase-field" placeholder="Enter Supabase API key" />';
-        echo '<p class="description">Your Supabase anon or service role key</p>';
-    }
-    
-    public function supabase_table_field() {
-        $options = get_option($this->option_name, array());
-        $value = isset($options['supabase_table']) ? $options['supabase_table'] : 'vehicle_conversations';
-        echo '<input type="text" name="' . $this->option_name . '[supabase_table]" value="' . esc_attr($value) . '" class="regular-text supabase-field" placeholder="vehicle_conversations" />';
-        echo '<p class="description">Name of the table to store vehicle data (default: vehicle_conversations)</p>';
+        $value = isset($options['parser_endpoint_url']) ? $options['parser_endpoint_url'] : 'https://iegsoumvmhvvhmdyxhxs.supabase.co/functions/v1/key-value-processor';
+        echo '<input type="url" name="' . $this->option_name . '[parser_endpoint_url]" value="' . esc_attr($value) . '" class="large-text" placeholder="https://your-parser-endpoint.com" />';
+        echo '<p class="description">The URL of your parser endpoint. This tool handles AI parsing and database storage internally.</p>';
     }
     
     public function page_selection_field() {
@@ -2543,7 +2516,9 @@ class AnamAdminSettings {
             'session_id' => $session_id,
             'has_transcript' => false,
             'transcript' => null,
-            'message_count' => 0
+            'message_count' => 0,
+            'parsed' => false,
+            'parsed_at' => null
         );
         
         if ($transcript_row) {
@@ -2560,6 +2535,8 @@ class AnamAdminSettings {
             $response_data['message_count'] = $transcript_row->message_count;
             $response_data['created_at'] = $transcript_row->created_at;
             $response_data['updated_at'] = $transcript_row->updated_at;
+            $response_data['parsed'] = (bool)$transcript_row->parsed;
+            $response_data['parsed_at'] = $transcript_row->parsed_at;
             
             error_log('✅ Transcript found for session: ' . $session_id . ' (' . $transcript_row->message_count . ' messages)');
         } else {
@@ -2724,18 +2701,16 @@ class AnamAdminSettings {
      * Send email notification when a session completes
      */
     private function send_session_notification($session_id, $message_count) {
-        $options = get_option($this->option_name, array());
-        $notification_enabled = isset($options['notification_enabled']) && $options['notification_enabled'] == '1';
-        $notification_email = isset($options['notification_email']) ? trim($options['notification_email']) : '';
+        // Always send to WordPress admin email
+        $admin_email = get_option('admin_email');
         
-        // Skip if notifications are disabled or no email configured
-        if (!$notification_enabled || empty($notification_email)) {
+        if (empty($admin_email)) {
             return;
         }
         
         // Build the email
         $site_name = get_bloginfo('name');
-        $transcripts_url = admin_url('admin.php?page=anam-sessions');
+        $transcripts_url = admin_url('admin.php?page=anam-sessions&view_session=' . urlencode($session_id));
         
         $subject = sprintf('[%s] New Chat Session Completed', $site_name);
         
@@ -2752,13 +2727,137 @@ class AnamAdminSettings {
         $headers = array('Content-Type: text/plain; charset=UTF-8');
         
         // Send the email
-        $sent = wp_mail($notification_email, $subject, $message, $headers);
+        $sent = wp_mail($admin_email, $subject, $message, $headers);
         
         if ($sent) {
-            error_log('✅ Session notification email sent to: ' . $notification_email);
+            error_log('✅ Session notification email sent to: ' . $admin_email);
         } else {
             error_log('❌ Failed to send session notification email');
         }
+    }
+    
+    /**
+     * AJAX handler to parse transcript and send to Google AI Studio
+     */
+    public function parse_transcript() {
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = isset($_POST['sessionId']) ? sanitize_text_field($_POST['sessionId']) : '';
+        
+        if (empty($session_id)) {
+            wp_send_json_error('Session ID is required');
+            return;
+        }
+        
+        // Get transcript from database
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        
+        $transcript_row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE session_id = %s",
+            $session_id
+        ));
+        
+        if (!$transcript_row) {
+            wp_send_json_error('Transcript not found');
+            return;
+        }
+        
+        // Check if already parsed
+        if ($transcript_row->parsed) {
+            wp_send_json_error('This transcript has already been parsed on ' . $transcript_row->parsed_at);
+            return;
+        }
+        
+        $transcript_data = json_decode($transcript_row->transcript_data, true);
+        
+        if (!$transcript_data) {
+            wp_send_json_error('Invalid transcript data');
+            return;
+        }
+        
+        // Get session metadata if provided
+        $session_metadata = isset($_POST['sessionMetadata']) ? json_decode(stripslashes($_POST['sessionMetadata']), true) : null;
+        
+        // Build payload for Google AI Studio
+        $payload = array(
+            'session_id' => $session_id,
+            'transcript' => $transcript_data,
+            'session_metadata' => $session_metadata,
+            'user_profile' => array(
+                'first_name' => 'Nick',
+                'last_name' => 'Patterson',
+                'phone' => '(912) 233-1234'
+            ),
+            'timestamp' => current_time('c')
+        );
+        
+        // Get parser endpoint URL from settings
+        $options = get_option($this->option_name, array());
+        $parser_url = isset($options['parser_endpoint_url']) ? $options['parser_endpoint_url'] : 'https://iegsoumvmhvvhmdyxhxs.supabase.co/functions/v1/key-value-processor';
+        
+        if (empty($parser_url)) {
+            wp_send_json_error('Parser endpoint URL not configured. Please set it in Database Integration settings.');
+            return;
+        }
+        
+        $response = wp_remote_post($parser_url, array(
+            'headers' => array(
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode($payload),
+            'timeout' => 60
+        ));
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error('Failed to connect to parser: ' . $response->get_error_message());
+            return;
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        
+        error_log('Parser response code: ' . $response_code);
+        error_log('Parser response body: ' . substr($response_body, 0, 500));
+        
+        if ($response_code !== 200) {
+            // Try to extract meaningful error from HTML if present
+            $error_msg = 'Parser returned error code ' . $response_code;
+            if (strpos($response_body, '<html') !== false) {
+                $error_msg .= ' (HTML error page returned - parser may be down)';
+            } else {
+                $error_msg .= ': ' . substr($response_body, 0, 200);
+            }
+            wp_send_json_error($error_msg);
+            return;
+        }
+        
+        // Mark transcript as parsed
+        $updated = $wpdb->update(
+            $table_name,
+            array(
+                'parsed' => 1,
+                'parsed_at' => current_time('mysql')
+            ),
+            array('session_id' => $session_id),
+            array('%d', '%s'),
+            array('%s')
+        );
+        
+        if ($updated === false) {
+            error_log('❌ Failed to mark transcript as parsed for session: ' . $session_id);
+        } else {
+            error_log('✅ Transcript marked as parsed for session: ' . $session_id);
+        }
+        
+        wp_send_json_success(array(
+            'message' => 'Transcript parsed successfully',
+            'parser_response' => json_decode($response_body, true),
+            'parsed_at' => current_time('mysql')
+        ));
     }
 
 }
@@ -2774,98 +2873,9 @@ function anam_render_sessions_page() {
     $api_key = isset($options['api_key']) ? $options['api_key'] : '';
     $persona_id = isset($options['persona_id']) ? $options['persona_id'] : '';
     
-    $notification_enabled = isset($options['notification_enabled']) && $options['notification_enabled'] == '1';
-    $notification_email = isset($options['notification_email']) ? $options['notification_email'] : get_option('admin_email');
-    
-    // Handle notification settings update
-    if (isset($_POST['anam_save_notification_settings']) && check_admin_referer('anam_notification_settings')) {
-        $enabled = isset($_POST['notification_enabled']) ? '1' : '0';
-        $new_email = isset($_POST['notification_email']) ? sanitize_email($_POST['notification_email']) : '';
-        $options['notification_enabled'] = $enabled;
-        $options['notification_email'] = $new_email;
-        update_option('anam_options', $options);
-        $notification_enabled = ($enabled == '1');
-        $notification_email = $new_email;
-        echo '<div class="notice notice-success is-dismissible"><p>Notification settings saved successfully!</p></div>';
-    }
     ?>
     <div class="wrap">
         <h1>💬 Chat Transcripts</h1>
-        
-        <!-- Email Notification Settings -->
-        <div style="background: white; border: 1px solid #ddd; border-radius: 5px; margin-bottom: 20px; max-width: 1440px;">
-            <div style="padding: 15px 20px; cursor: pointer; border-bottom: 1px solid #ddd;" id="notification-accordion-header">
-                <h2 style="margin: 0; display: inline-block;">📧 Email Notifications</h2>
-                <span style="float: right; font-size: 20px;" id="notification-accordion-icon">▼</span>
-            </div>
-            
-            <div id="notification-accordion-content" style="display: none; padding: 20px;">
-                <form method="post" action="">
-                    <?php wp_nonce_field('anam_notification_settings'); ?>
-                    
-                    <table class="form-table" style="margin-top: 0;">
-                        <tr>
-                            <th scope="row" style="padding-top: 0;">
-                                <label for="notification_enabled">Enable Notifications</label>
-                            </th>
-                            <td style="padding-top: 0;">
-                                <label>
-                                    <input type="checkbox" 
-                                           id="notification_enabled" 
-                                           name="notification_enabled" 
-                                           value="1"
-                                           <?php checked($notification_enabled, true); ?> />
-                                    Send email when chat sessions complete
-                                </label>
-                                <p class="description">
-                                    Receive an email notification with a direct link to view the transcript.
-                                </p>
-                            </td>
-                        </tr>
-                        <tr id="email-row">
-                            <th scope="row">
-                                <label for="notification_email">Email Address</label>
-                            </th>
-                            <td>
-                                <input type="email" 
-                                       id="notification_email" 
-                                       name="notification_email" 
-                                       value="<?php echo esc_attr($notification_email); ?>" 
-                                       class="regular-text" 
-                                       placeholder="admin@example.com" />
-                            </td>
-                        </tr>
-                    </table>
-                    
-                    <p class="submit">
-                        <input type="submit" name="anam_save_notification_settings" class="button button-primary" value="Save Notification Settings" />
-                    </p>
-                </form>
-            </div>
-            
-            <script>
-            jQuery(document).ready(function($) {
-                // Accordion toggle
-                $('#notification-accordion-header').on('click', function() {
-                    $('#notification-accordion-content').slideToggle(300);
-                    const icon = $('#notification-accordion-icon');
-                    icon.text(icon.text() === '▼' ? '▲' : '▼');
-                });
-                
-                // Show/hide email field based on checkbox
-                function toggleEmailField() {
-                    if ($('#notification_enabled').is(':checked')) {
-                        $('#email-row').show();
-                    } else {
-                        $('#email-row').hide();
-                    }
-                }
-                
-                toggleEmailField();
-                $('#notification_enabled').on('change', toggleEmailField);
-            });
-            </script>
-        </div>
         
         <?php if (empty($api_key) || empty($persona_id)): ?>
             <div class="notice notice-warning">

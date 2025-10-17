@@ -342,7 +342,26 @@ jQuery(document).ready(function($) {
                     html += '<div id="transcript-tab-content">' + transcriptHtml + '</div>';
                     html += '<div id="transcript-json-tab-content" style="display: none;">' + transcriptJsonHtml + '</div>';
                     
+                    // Add Parse Chat button at bottom right
+                    html += '<div style="text-align: right; margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd;">';
+                    
+                    if (data.parsed) {
+                        // Already parsed - show disabled green button
+                        html += '<button type="button" class="button" id="parse-chat-btn" disabled style="padding: 8px 20px; background: #46b450; border-color: #46b450; color: white; cursor: not-allowed;">';
+                        html += '✓ Parsed on ' + data.parsed_at + '</button>';
+                    } else {
+                        // Not parsed yet - show active button
+                        html += '<button type="button" class="button button-primary" id="parse-chat-btn" style="padding: 8px 20px;">';
+                        html += '🔍 Parse Chat</button>';
+                    }
+                    
+                    html += '</div>';
+                    
                     $('#session-details-content').html(html);
+                    
+                    // Store transcript and session data for parsing
+                    $('#session-details-content').data('transcript-data', data.transcript);
+                    $('#session-details-content').data('session-id', sessionId);
                 } else {
                     $('#session-details-content').html(
                         '<div class="notice notice-error"><p>Failed to load session details: ' + 
@@ -391,6 +410,9 @@ jQuery(document).ready(function($) {
                         escapeHtml(JSON.stringify(response.data, null, 2)) + '</pre>';
                     
                     $('#session-json-tab-content').html(html).data('loaded', true);
+                    
+                    // Store session metadata for parsing
+                    $('#session-details-content').data('session-metadata', response.data);
                 } else {
                     $('#session-json-tab-content').html(
                         '<div class="notice notice-error"><p>Failed to load session metadata: ' + 
@@ -405,6 +427,59 @@ jQuery(document).ready(function($) {
             }
         });
     }
+    
+    // Parse Chat button - send to Google AI Studio parser
+    $(document).on('click', '#parse-chat-btn', function() {
+        console.log('🔍 Parse Chat button clicked');
+        
+        const $button = $(this);
+        const sessionId = $('#session-details-content').data('session-id');
+        const sessionMetadata = $('#session-details-content').data('session-metadata');
+        
+        if (!sessionId) {
+            alert('No session ID available.');
+            return;
+        }
+        
+        // Disable button and show loading state
+        $button.prop('disabled', true).text('⏳ Parsing...');
+        
+        // Send to backend which will forward to Google AI Studio
+        $.ajax({
+            url: ANAM_CONFIG.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'anam_parse_transcript',
+                nonce: ANAM_CONFIG.nonce,
+                sessionId: sessionId,
+                sessionMetadata: sessionMetadata ? JSON.stringify(sessionMetadata) : null
+            },
+            success: function(response) {
+                console.log('✅ Parse response:', response);
+                
+                if (response.success) {
+                    alert('✅ Transcript parsed successfully!\n\nData has been sent to Google AI Studio and saved to Supabase.');
+                    
+                    // Update button to show parsed state
+                    $button.text('✓ Parsed').css({
+                        'background': '#46b450',
+                        'border-color': '#46b450',
+                        'cursor': 'not-allowed'
+                    });
+                    
+                    console.log('Parser response:', response.data.parser_response);
+                } else {
+                    alert('❌ Failed to parse transcript:\n\n' + response.data);
+                    $button.prop('disabled', false).text('🔍 Parse Chat');
+                }
+            },
+            error: function(xhr, status, error) {
+                console.error('❌ Parse error:', error);
+                alert('❌ Error parsing transcript:\n\n' + error);
+                $button.prop('disabled', false).text('🔍 Parse Chat');
+            }
+        });
+    });
     
     // Close modal button
     $(document).on('click', '#close-session-modal', function() {
@@ -443,6 +518,22 @@ jQuery(document).ready(function($) {
         if ($('#sessions-container').length > 0) {
             console.log('📋 Loading sessions...');
             loadSessions();
+            
+            // Check if we should auto-open a session modal from URL parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const viewSessionId = urlParams.get('view_session');
+            if (viewSessionId) {
+                console.log('🔗 Auto-opening session from email link:', viewSessionId);
+                // Wait for sessions to load, then trigger the view
+                setTimeout(function() {
+                    const viewButton = $('button[data-session-id="' + viewSessionId + '"]');
+                    if (viewButton.length > 0) {
+                        viewButton.click();
+                    } else {
+                        console.warn('⚠️ Session not found on current page:', viewSessionId);
+                    }
+                }, 1000);
+            }
         }
         
         console.log('✅ Anam Admin - Ready!');
