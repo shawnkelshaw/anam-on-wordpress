@@ -1,4 +1,20 @@
-# Vehicle Data Parsing & Supabase Integration - Implementation Guide
+# Anam WordPress Plugin - Implementation Guide
+
+## 🎉 What's New (v2.1.0)
+
+### Architecture Refactoring - Phase 1 Complete ✅
+
+The plugin has been refactored for better maintainability and follows WordPress best practices:
+
+- **Modular JavaScript** - Separated into `assets/js/admin.js` and `assets/js/frontend.js`
+- **Proper Enqueuing** - Uses `wp_enqueue_script()` instead of inline code
+- **Reduced Complexity** - Main PHP file reduced from 3,209 to 2,131 lines
+- **Better Debugging** - Separate files in browser DevTools
+- **Backward Compatible** - All functionality preserved
+
+See `REFACTORING.md` for complete details.
+
+---
 
 ## 🎉 What's New (v2.0.0)
 

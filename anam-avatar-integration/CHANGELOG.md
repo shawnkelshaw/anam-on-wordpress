@@ -2,6 +2,69 @@
 
 All notable changes to the Anam.ai WordPress Integration plugin will be documented in this file.
 
+## [2.1.0] - 2025-11-06
+
+### 🏗️ Architecture Refactoring - Phase 1: JavaScript Extraction
+
+This release focuses on code organization and maintainability without changing functionality.
+
+### Changed
+
+#### JavaScript Architecture
+- **Extracted inline JavaScript** to separate modular files
+- **Created `assets/js/` directory** for organized JavaScript storage
+- **Moved admin.js** (542 lines) to `assets/js/admin.js`
+- **Extracted frontend.js** (1,098 lines) to `assets/js/frontend.js`
+- **Reduced main PHP file** from 3,209 to 2,131 lines (-1,078 lines)
+
+#### Enqueue System
+- **Replaced inline `<script>` tags** with `wp_enqueue_script()`
+- **Added module type support** for ES6 imports
+- **Implemented `wp_localize_script()`** for passing configuration to frontend
+- **Created `ANAM_FRONTEND_CONFIG`** global object for frontend JavaScript
+
+#### File Structure
+```
+Before:
+- anam-admin-settings.php (3,209 lines)
+- anam-admin.js (542 lines)
+
+After:
+- anam-admin-settings.php (2,131 lines)
+- assets/js/admin.js (542 lines)
+- assets/js/frontend.js (1,098 lines)
+```
+
+### Benefits
+- ✅ **Easier debugging** with browser DevTools source maps
+- ✅ **Better IDE support** with proper syntax highlighting
+- ✅ **Cleaner separation** of concerns (PHP backend, JS frontend)
+- ✅ **Preparation for minification** and optimization
+- ✅ **Follows WordPress best practices** for script enqueuing
+
+### Technical Details
+- **Frontend config passed via** `wp_localize_script()` as `ANAM_FRONTEND_CONFIG`
+- **Module type attribute** added via `script_loader_tag` filter
+- **All functionality preserved** - backward compatible
+- **No database changes** required
+- **Git branch**: `refactor-js-extraction-phase1`
+
+### Testing
+- ✅ Admin pages load correctly
+- ✅ Sessions list displays
+- ✅ Transcript modal works
+- ✅ Parse Chat button functions
+- ✅ Frontend avatar displays
+- ✅ Transcript capture works
+
+### Documentation
+- ✅ Updated README.md with new file structure
+- ✅ Added REFACTORING.md with detailed plan
+- ✅ Updated CHANGELOG.md
+- ✅ Created ROLLBACK.sh for emergency rollback
+
+---
+
 ## [2.0.0] - 2025-01-15
 
 ### 🎉 Major Release - Complete Transcript Management System
