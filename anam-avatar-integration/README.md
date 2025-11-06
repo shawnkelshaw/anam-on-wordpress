@@ -27,6 +27,19 @@ A comprehensive WordPress plugin for integrating Anam.ai digital avatars using t
 
 ## 🔧 Plugin Files
 
+### Core Files
+```
+anam-avatar-integration/
+├── assets/
+│   └── js/
+│       ├── admin.js              # Admin interface (542 lines)
+│       └── frontend.js           # Frontend avatar logic (1,098 lines)
+├── anam-admin-settings.php       # Main plugin file (2,131 lines)
+├── anam-transcript-handler.php   # Transcript feature handler
+├── anam-getting-started.js       # Getting Started page
+└── uninstall.php                 # Clean uninstall
+```
+
 ### Main Plugin (Production Ready)
 - **`anam-admin-settings.php`** - ✅ **Primary Plugin** - Complete WordPress integration with:
   - Full admin interface with 4 settings pages
@@ -34,12 +47,25 @@ A comprehensive WordPress plugin for integrating Anam.ai digital avatars using t
   - Session management and viewing
   - AI parsing integration
   - Database table auto-creation
+  - Modular JavaScript architecture
 
-### JavaScript Files
-- **`anam-admin.js`** - Admin interface functionality (sessions list, modal, tabs, AJAX)
+### JavaScript Architecture (Refactored v2.1)
+- **`assets/js/admin.js`** - Admin interface functionality
+  - Sessions list loading and pagination
+  - Modal viewer with three tabs
+  - Parse Chat button logic
+  - Settings page interactions
+  
+- **`assets/js/frontend.js`** - Frontend avatar logic
+  - Anam SDK initialization
+  - Real-time transcript capture
+  - Session management
+  - Avatar display and controls
+
 - **`anam-getting-started.js`** - Getting Started page functionality
 
 ### Utilities
+- **`anam-transcript-handler.php`** - Transcript capture feature handler
 - **`uninstall.php`** - Clean database removal on plugin deletion
 
 ## ⚙️ Configuration
