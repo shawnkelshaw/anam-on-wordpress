@@ -968,9 +968,9 @@ class AnamAdminSettings {
         
         // Enqueue on ALL admin pages for now to test
         if (strpos($hook, 'anam') !== false || $hook === 'anam-avatar_page_anam-settings' || $hook === 'settings_page_anam-settings') {
-            error_log('✅ Enqueuing admin.js on hook: ' . $hook);
+            error_log('✅ Enqueuing anam-admin.js on hook: ' . $hook);
             
-            wp_enqueue_script('anam-admin', plugin_dir_url(__FILE__) . 'assets/js/admin.js', array('jquery'), '2.0.3', true);
+            wp_enqueue_script('anam-admin', plugin_dir_url(__FILE__) . 'anam-admin.js', array('jquery'), '2.0.2', true);
             
             // Pass both anam_ajax (for verification) and ANAM_CONFIG (for sessions)
             wp_localize_script('anam-admin', 'anam_ajax', array(
