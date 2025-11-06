@@ -39,7 +39,10 @@ class AnamAdminSettings {
         add_action('wp_ajax_anam_save_transcript', array($this, 'save_transcript'));
         add_action('wp_ajax_nopriv_anam_save_transcript', array($this, 'save_transcript'));
         add_action('wp_ajax_anam_parse_transcript', array($this, 'parse_transcript'));
+        add_action('wp_ajax_anam_reset_plugin', array($this, 'reset_plugin'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+        add_action('admin_notices', array($this, 'show_config_changed_notice'));
+        add_action('template_redirect', array($this, 'disable_page_caching'));
         
         // Create database table on plugin activation
         register_activation_hook(__FILE__, array($this, 'create_transcripts_table'));
@@ -361,9 +364,49 @@ class AnamAdminSettings {
                 <?php
                 settings_fields($this->option_group);
                 do_settings_sections('anam-settings-avatar');
+                submit_button('Save Settings', 'primary', 'submit', true, array('id' => 'anam-save-settings'));
                 ?>
-                <?php submit_button('Save Settings', 'primary', 'submit', true, array('id' => 'anam-save-settings')); ?>
+                <button type="button" id="anam-reset-button" class="button button-secondary" style="background: #dc3545; color: white; border-color: #dc3545;">
+                    🔄 Reset Plugin
+                </button>
             </form>
+            
+            <script>
+            jQuery(document).ready(function($) {
+                $('#anam-reset-button').on('click', function(e) {
+                    e.preventDefault();
+                    
+                    if (!confirm('⚠️ WARNING: This will permanently delete ALL plugin settings and transcripts. This action cannot be undone.\n\nAre you absolutely sure you want to reset the plugin?')) {
+                        return;
+                    }
+                    
+                    var $button = $(this);
+                    $button.prop('disabled', true).text('🔄 Resetting...');
+                    
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'anam_reset_plugin',
+                            nonce: '<?php echo wp_create_nonce('anam_session'); ?>'
+                        },
+                        success: function(response) {
+                            if (response.success) {
+                                alert('✅ ' + response.data.message);
+                                window.location.href = response.data.redirect;
+                            } else {
+                                alert('❌ Error: ' + response.data);
+                                $button.prop('disabled', false).html('🔄 Reset Plugin');
+                            }
+                        },
+                        error: function(xhr, status, error) {
+                            alert('❌ Reset failed: ' + error);
+                            $button.prop('disabled', false).html('🔄 Reset Plugin');
+                        }
+                    });
+                });
+            });
+            </script>
             
             <!-- Auto-verification Modal -->
             <div id="anam-verification-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 999999; justify-content: center; align-items: center;">
@@ -395,6 +438,43 @@ class AnamAdminSettings {
                     <li><strong>Container ID:</strong> HTML element ID where avatar should appear (optional)</li>
                 </ul>
             </div>
+            
+            <script>
+            jQuery(document).ready(function($) {
+                $('#anam-reset-button').on('click', function(e) {
+                    e.preventDefault();
+                    
+                    if (!confirm('⚠️ WARNING: This will permanently delete ALL plugin settings and transcripts. This action cannot be undone.\n\nAre you absolutely sure you want to reset the plugin?')) {
+                        return;
+                    }
+                    
+                    var $button = $(this);
+                    $button.prop('disabled', true).text('🔄 Resetting...');
+                    
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'anam_reset_plugin',
+                            nonce: '<?php echo wp_create_nonce('anam_session'); ?>'
+                        },
+                        success: function(response) {
+                            if (response.success) {
+                                alert('✅ ' + response.data.message);
+                                window.location.href = response.data.redirect;
+                            } else {
+                                alert('❌ Error: ' + response.data);
+                                $button.prop('disabled', false).html('🔄 Reset Plugin');
+                            }
+                        },
+                        error: function(xhr, status, error) {
+                            alert('❌ Reset failed: ' + error);
+                            $button.prop('disabled', false).html('🔄 Reset Plugin');
+                        }
+                    });
+                });
+            });
+            </script>
         </div>
         <?php
     }
@@ -735,8 +815,28 @@ class AnamAdminSettings {
             $sanitized['auth_token'] = trim($input['auth_token']);
         }
         
+        // Check if ANY critical config values changed - if so, clear all transcripts
+        $config_changed = false;
+        $critical_fields = array('api_key', 'auth_token', 'persona_id', 'avatar_id', 'voice_id', 'llm_id');
+        
+        foreach ($critical_fields as $field) {
+            if (isset($input[$field])) {
+                $old_value = isset($existing_options[$field]) ? $existing_options[$field] : '';
+                $new_value = $field === 'persona_id' ? sanitize_text_field($input[$field]) : $input[$field];
+                
+                if ($old_value !== $new_value) {
+                    $config_changed = true;
+                    error_log("🔄 Config changed: {$field} changed from '{$old_value}' to '{$new_value}'");
+                    break;
+                }
+            }
+        }
+        
         if (isset($input['persona_id'])) {
             $sanitized['persona_id'] = sanitize_text_field($input['persona_id']);
+            error_log('💾 SAVING persona_id to database: ' . $sanitized['persona_id']);
+        } else {
+            error_log('⚠️ WARNING: persona_id NOT in input array during save!');
         }
         
         if (isset($input['avatar_id'])) {
@@ -825,7 +925,41 @@ class AnamAdminSettings {
         // Advanced SDK functionality
         $sanitized['advanced_sdk_enabled'] = isset($input['advanced_sdk_enabled']) ? true : false;
         
+        // If ANY critical config changed, clear ALL transcripts from WordPress database
+        if ($config_changed) {
+            global $wpdb;
+            $table_name = $wpdb->prefix . 'anam_transcripts';
+            $deleted = $wpdb->query("TRUNCATE TABLE {$table_name}");
+            error_log("🗑️ CONFIG CHANGED - Cleared all transcripts from database. Fresh start with new config!");
+            
+            // Set a transient to show admin notice
+            set_transient('anam_config_changed_notice', true, 45);
+        }
+        
         return $sanitized;
+    }
+    
+    /**
+     * Show admin notice when config changes and transcripts are cleared
+     */
+    public function show_config_changed_notice() {
+        if (get_transient('anam_config_changed_notice')) {
+            ?>
+            <div class="notice notice-success is-dismissible">
+                <p><strong>✅ Configuration Updated!</strong> All previous transcripts have been cleared. Only new sessions with the updated configuration will be displayed.</p>
+            </div>
+            <?php
+            delete_transient('anam_config_changed_notice');
+        }
+        
+        if (get_transient('anam_reset_notice')) {
+            ?>
+            <div class="notice notice-success is-dismissible">
+                <p><strong>🔄 Plugin Reset Complete!</strong> All settings and transcripts have been cleared. The plugin is now in its default state.</p>
+            </div>
+            <?php
+            delete_transient('anam_reset_notice');
+        }
     }
     
     public function enqueue_admin_scripts($hook) {
@@ -872,13 +1006,22 @@ class AnamAdminSettings {
         
         $options = get_option($this->option_name, array());
         
+        // Debug logging
+        error_log('🎯 Avatar Integration Check:');
+        error_log('Options retrieved: ' . print_r($options, true));
+        error_log('API Key present: ' . (empty($options['api_key']) ? 'NO' : 'YES'));
+        error_log('Persona ID present: ' . (empty($options['persona_id']) ? 'NO' : 'YES'));
+        
         // Check if we have minimum required settings
         if (empty($options['api_key']) || empty($options['persona_id'])) {
+            error_log('❌ Avatar NOT loading - missing required config');
             return;
         }
         
+        error_log('✅ Avatar SHOULD load - config is present');
+        
         $display_method = isset($options['display_method']) ? $options['display_method'] : 'element_id';
-        $container_id = !empty($options['container_id']) ? $options['container_id'] : '';
+        $container_id = !empty($options['container_id']) ? $options['container_id'] : 'anam-stream-container';
         $position = isset($options['avatar_position']) ? $options['avatar_position'] : 'bottom-right';
         
         ?>
@@ -1251,16 +1394,30 @@ class AnamAdminSettings {
                 });
                 
                 // Add listener for when streaming starts (session ID might be available then)
-                anamClient.addListener(AnamEvent.STREAM_STARTED, () => {
+                anamClient.addListener(AnamEvent.STREAM_STARTED, (event) => {
                     console.log('🎬 Stream started, checking for session ID again...');
+                    console.log('🎬 Stream started event data:', event);
+                    
                     if (!currentSessionId) {
                         try {
-                            if (anamClient.sessionId) {
+                            // Try to get from event first
+                            if (event && event.sessionId) {
+                                currentSessionId = event.sessionId;
+                                console.log('📋 Session ID captured from event:', currentSessionId);
+                            } else if (anamClient.sessionId) {
                                 currentSessionId = anamClient.sessionId;
                                 console.log('📋 Session ID captured after stream start:', currentSessionId);
                             } else if (anamClient.session && anamClient.session.id) {
                                 currentSessionId = anamClient.session.id;
                                 console.log('📋 Session ID captured from session after stream start:', currentSessionId);
+                            }
+                            
+                            // Validate it's a UUID, not "auth"
+                            if (currentSessionId && currentSessionId !== 'auth') {
+                                console.log('✅ Valid session ID captured:', currentSessionId);
+                            } else {
+                                console.warn('⚠️ Invalid session ID detected:', currentSessionId);
+                                currentSessionId = null;
                             }
                         } catch (error) {
                             console.error('❌ Error capturing session ID after stream start:', error);
@@ -1315,6 +1472,29 @@ class AnamAdminSettings {
                 await anamClient.streamToVideoElement('anam-element-video');
                 
                 console.log('🎬 Streaming to element completed');
+                
+                // CRITICAL: Capture session ID immediately after streaming starts
+                setTimeout(() => {
+                    if (!currentSessionId || currentSessionId === 'auth') {
+                        console.log('🔍 POST-STREAM: Attempting to capture session ID...');
+                        console.log('🔍 POST-STREAM: anamClient keys:', Object.keys(anamClient));
+                        
+                        // Try all possible locations
+                        const possibleId = anamClient.sessionId || 
+                                         (anamClient.session && anamClient.session.id) ||
+                                         (anamClient._session && anamClient._session.id) ||
+                                         (anamClient._sessionId) ||
+                                         (anamClient.connection && anamClient.connection.sessionId);
+                        
+                        if (possibleId && possibleId !== 'auth' && possibleId.length > 30) {
+                            currentSessionId = possibleId;
+                            console.log('✅ POST-STREAM: Session ID captured:', currentSessionId);
+                        } else {
+                            console.error('❌ POST-STREAM: Could not find valid session ID');
+                            console.log('🔍 POST-STREAM: Full anamClient:', anamClient);
+                        }
+                    }
+                }, 2000); // Wait 2 seconds for session to be established
                 
                 // Replace loading with video and controls
                 customContainer.innerHTML = '';
@@ -1495,14 +1675,32 @@ class AnamAdminSettings {
                 }
                 
                 if (sessionIdToProcess) {
-                    console.log('📋 Processing session:', sessionIdToProcess);
-                    console.log('💬 Transcript messages:', conversationTranscript.length);
-                    console.log('📝 Transcript data:', conversationTranscript);
+                    // Validate session ID is a UUID, not "auth"
+                    if (sessionIdToProcess === 'auth' || sessionIdToProcess.length < 30) {
+                        console.error('❌ Invalid session ID detected:', sessionIdToProcess);
+                        console.log('🔍 Attempting to find real session ID...');
+                        
+                        // Try harder to get the real session ID
+                        if (anamClient && anamClient._session) {
+                            sessionIdToProcess = anamClient._session.id || anamClient._session.sessionId;
+                            console.log('🔍 Found in _session:', sessionIdToProcess);
+                        }
+                    }
                     
-                    // Save transcript to database
-                    await saveTranscriptToDatabase(sessionIdToProcess);
-                    
-                    currentSessionId = null; // Clear session ID after sending
+                    // Only proceed if we have a valid UUID
+                    if (sessionIdToProcess && sessionIdToProcess !== 'auth' && sessionIdToProcess.length > 30) {
+                        console.log('📋 Processing session:', sessionIdToProcess);
+                        console.log('💬 Transcript messages:', conversationTranscript.length);
+                        console.log('📝 Transcript data:', conversationTranscript);
+                        
+                        // Save transcript to database
+                        await saveTranscriptToDatabase(sessionIdToProcess);
+                        
+                        currentSessionId = null; // Clear session ID after sending
+                    } else {
+                        console.error('❌ Could not find valid session ID. Got:', sessionIdToProcess);
+                        console.log('🔍 Final debug - anamClient structure:', anamClient);
+                    }
                 } else {
                     console.log('⚠️ No session ID available for processing');
                     console.log('🔍 Final debug - anamClient structure:', anamClient);
@@ -2059,6 +2257,9 @@ class AnamAdminSettings {
         // Add persona ID if available (this is key for the new API)
         if (!empty($options['persona_id'])) {
             $persona_config['personaId'] = $options['persona_id'];
+            error_log('🎯 Creating session with personaId: ' . $options['persona_id']);
+        } else {
+            error_log('⚠️ WARNING: Creating session WITHOUT personaId - this will cause transcript mismatch!');
         }
         
         // Add other configuration
@@ -2415,32 +2616,40 @@ class AnamAdminSettings {
         $options = get_option('anam_options', array());
         $api_key = isset($options['api_key']) ? $options['api_key'] : '';
         $auth_token = isset($options['auth_token']) ? $options['auth_token'] : '';
+        $persona_id = isset($options['persona_id']) ? $options['persona_id'] : '';
 
         // Debug logging
+        error_log('=== LIST SESSIONS DEBUG ===');
         error_log('List Sessions - API Key: ' . (empty($api_key) ? 'EMPTY' : 'Present (length: ' . strlen($api_key) . ')'));
         error_log('List Sessions - Auth Token: ' . (empty($auth_token) ? 'EMPTY' : 'Present (length: ' . strlen($auth_token) . ')'));
+        error_log('List Sessions - Persona ID: ' . (empty($persona_id) ? 'EMPTY' : $persona_id));
+        error_log('List Sessions - Full options array keys: ' . implode(', ', array_keys($options)));
 
-        if (empty($api_key)) {
-            wp_send_json_error('API Key not configured. Please add your API Key in Avatar Setup.');
+        // Use api_key for Bearer token (it contains the base64-encoded token)
+        // auth_token is the UUID/apiKeyId, NOT the Bearer token
+        if (!empty($api_key)) {
+            $bearer_token = $api_key;
+            error_log('List Sessions - Using api_key for Bearer token');
+        } else {
+            wp_send_json_error('No API Key configured. Please add your API Key in Avatar Setup.');
             return;
         }
-
-        if (empty($auth_token)) {
-            wp_send_json_error('Auth Token not configured. Please add your Auth Token in Avatar Setup.');
-            return;
-        }
-        
-        // The API key IS the base64 encoded bearer token - use it directly
-        $bearer_token = $api_key;
 
         // Get pagination parameters
         $page = isset($_POST['page']) ? intval($_POST['page']) : 1;
         $per_page = isset($_POST['perPage']) ? intval($_POST['perPage']) : 10;
 
-        // Build API URL - use apiKeyId parameter, not personaId
-        $api_url = 'https://api.anam.ai/v1/sessions?page=' . $page . '&perPage=' . $per_page . '&apiKeyId=' . urlencode($auth_token);
+        // Build API URL - no filters, just pagination
+        $api_url = 'https://api.anam.ai/v1/sessions?page=' . $page . '&perPage=' . $per_page;
+        
+        // TEMPORARILY DISABLED: personaId filter to see ALL sessions
+        // if (!empty($persona_id)) {
+        //     $api_url .= '&personaId=' . urlencode($persona_id);
+        //     error_log('List Sessions - Filtering by personaId: ' . $persona_id);
+        // }
         
         error_log('List Sessions - API URL: ' . $api_url);
+        error_log('List Sessions - Testing WITHOUT personaId filter to see all sessions');
 
         // Make request to Anam API
         $response = wp_remote_get($api_url, array(
@@ -2858,6 +3067,50 @@ class AnamAdminSettings {
             'parser_response' => json_decode($response_body, true),
             'parsed_at' => current_time('mysql')
         ));
+    }
+
+    /**
+     * AJAX handler to reset plugin to default state
+     */
+    public function reset_plugin() {
+        // Verify nonce
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+
+        global $wpdb;
+        
+        // 1. Clear ALL options from wp_options
+        delete_option('anam_options');
+        error_log('🗑️ RESET: Deleted all plugin options from wp_options');
+        
+        // 2. Clear ALL transcripts from wp_anam_transcripts table
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        $deleted = $wpdb->query("TRUNCATE TABLE {$table_name}");
+        error_log('🗑️ RESET: Cleared all transcripts from database');
+        
+        // 3. Set transient for success notice
+        set_transient('anam_reset_notice', true, 45);
+        
+        wp_send_json_success(array(
+            'message' => 'Plugin reset successfully. All settings and transcripts have been cleared.',
+            'redirect' => admin_url('admin.php?page=anam-settings')
+        ));
+    }
+    
+    /**
+     * Disable page caching for pages with avatar
+     */
+    public function disable_page_caching() {
+        if (!$this->should_show_avatar()) {
+            return;
+        }
+        
+        // Set headers to prevent caching
+        header('Cache-Control: no-cache, no-store, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        header('Expires: 0');
     }
 
 }
