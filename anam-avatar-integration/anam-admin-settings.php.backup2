@@ -937,7 +937,7 @@ class AnamAdminSettings {
             
             wp_localize_script('anam-admin', 'ANAM_CONFIG', array(
                 'ajaxUrl' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('anam_admin_nonce')
+                'nonce' => wp_create_nonce('anam_session')
             ));
             
             error_log('✅ Localized ANAM_CONFIG with ajaxUrl and nonce');
@@ -1117,6 +1117,870 @@ class AnamAdminSettings {
     }
     
     // AJAX handler methods moved to includes/class-ajax-handlers.php
+    
+    /**
+     * Disable page caching for pages with avatar
+     */
+    public function disable_page_caching() {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'anam_session')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $options = get_option($this->option_name, array());
+        
+        if (empty($options['api_key'])) {
+            wp_send_json_error('API key not configured');
+            return;
+        }
+        
+        // Build persona config according to new API requirements
+        $persona_config = array();
+        
+        // Add persona ID if available (this is key for the new API)
+        if (!empty($options['persona_id'])) {
+            $persona_config['personaId'] = $options['persona_id'];
+            error_log('🎯 Creating session with personaId: ' . $options['persona_id']);
+        } else {
+            error_log('⚠️ WARNING: Creating session WITHOUT personaId - this will cause transcript mismatch!');
+        }
+        
+        // Add other configuration
+        if (!empty($options['avatar_id'])) {
+            $persona_config['avatarId'] = $options['avatar_id'];
+        }
+        
+        if (!empty($options['voice_id'])) {
+            $persona_config['voiceId'] = $options['voice_id'];
+        }
+        
+        if (!empty($options['llm_id'])) {
+            $persona_config['llmId'] = $options['llm_id'];
+        }
+        
+        // Always include system prompt
+        $persona_config['systemPrompt'] = !empty($options['system_prompt']) 
+            ? $options['system_prompt'] 
+            : 'You are a helpful digital assistant.';
+            
+        // Add a name for the persona
+        $persona_config['name'] = 'WordPress Avatar';
+        
+        $request_body = array(
+            'personaConfig' => $persona_config
+        );
+        
+        $args = array(
+            'method' => 'POST',
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'Authorization' => 'Bearer ' . $options['api_key']
+            ),
+            'body' => json_encode($request_body),
+            'timeout' => 30,
+            'sslverify' => true
+        );
+        
+        $response = wp_remote_post('https://api.anam.ai/v1/auth/session-token', $args);
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error('Connection error: ' . $response->get_error_message());
+            return;
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        
+        if ($response_code !== 200) {
+            wp_send_json_error("API error {$response_code}: {$response_body}");
+            return;
+        }
+        
+        $data = json_decode($response_body, true);
+        
+        if (isset($data['sessionToken']) && !empty($data['sessionToken'])) {
+            wp_send_json_success(array(
+                'sessionToken' => $data['sessionToken'],
+                'timestamp' => current_time('mysql')
+            ));
+        } else {
+            wp_send_json_error('Session token not found in response');
+        }
+    }
+    
+    public function verify_api_key() {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'anam_verify_api')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        // Don't sanitize - base64 strings have special characters
+        $api_key = isset($_POST['api_key']) ? trim($_POST['api_key']) : '';
+        
+        if (empty($api_key)) {
+            wp_send_json_error('API key is required');
+            return;
+        }
+        
+        // Simple API verification - just check personas endpoint
+        $args = array(
+            'method' => 'GET',
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'Authorization' => 'Bearer ' . $api_key
+            ),
+            'timeout' => 15,
+            'sslverify' => true
+        );
+        
+        $start_time = microtime(true);
+        $response = wp_remote_get('https://api.anam.ai/v1/personas', $args);
+        $response_time = round((microtime(true) - $start_time) * 1000);
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error('Connection failed: ' . $response->get_error_message());
+            return;
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        
+        // Check if API key is valid based on response
+        if ($response_code === 200) {
+            // Mark as verified and save timestamp
+            update_option('anam_api_verified', true);
+            update_option('anam_api_verified_at', current_time('mysql'));
+            wp_send_json_success(array(
+                'message' => 'API key verified successfully',
+                'response_time' => $response_time . 'ms',
+                'verified_at' => current_time('mysql')
+            ));
+        } else {
+            // Clear verification status
+            update_option('anam_api_verified', false);
+            
+            // Provide helpful error message
+            $error_message = 'API verification failed';
+            if ($response_code === 401 || $response_code === 403) {
+                $error_message = 'Invalid API key - Access denied';
+            } elseif ($response_code === 429) {
+                $error_message = 'Rate limit exceeded - Please try again later';
+            } elseif ($response_code >= 500) {
+                $error_message = 'Anam.ai server error - Please try again later';
+            }
+            
+            wp_send_json_error(array(
+                'message' => $error_message,
+                'status_code' => $response_code,
+                'response' => substr($response_body, 0, 200)
+            ));
+        }
+    }
+    
+    // Handle advanced SDK toggle
+    public function handle_toggle_advanced_sdk() {
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'anam_admin_nonce')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        // Get the enabled value - it comes as string 'true' or 'false'
+        $enabled_string = isset($_POST['enabled']) ? $_POST['enabled'] : 'false';
+        $enabled = ($enabled_string === 'true');
+        
+        // Get current options - MUST get fresh copy
+        $options = get_option('anam_options', array());
+        
+        // Set the value
+        $options['advanced_sdk_enabled'] = $enabled;
+        
+        // Delete first to force update
+        delete_option('anam_options');
+        add_option('anam_options', $options);
+        
+        wp_send_json_success(array(
+            'enabled' => $enabled,
+            'message' => $enabled ? 'Advanced SDK enabled' : 'Advanced SDK disabled'
+        ));
+    }
+    
+    // Handle session token requests
+    public function handle_session_token() {
+        // Verify nonce
+        if (!wp_verify_nonce($_POST['nonce'], 'anam_session')) {
+            wp_send_json_error('Invalid nonce');
+        }
+        
+        $options = get_option($this->option_name, array());
+        $api_key = isset($options['api_key']) ? $options['api_key'] : '';
+        
+        if (empty($api_key)) {
+            wp_send_json_error('API key not configured');
+        }
+        
+        // Get persona configuration from options
+        $persona_id = isset($options['persona_id']) ? $options['persona_id'] : '';
+        $avatar_id = isset($options['avatar_id']) ? $options['avatar_id'] : '';
+        $voice_id = isset($options['voice_id']) ? $options['voice_id'] : '';
+        $llm_id = isset($options['llm_id']) ? $options['llm_id'] : '';
+        $system_prompt = isset($options['system_prompt']) ? $options['system_prompt'] : '';
+        
+        // Build persona config
+        $persona_config = array();
+        
+        if (!empty($persona_id)) {
+            $persona_config['personaId'] = $persona_id;
+        }
+        
+        if (!empty($avatar_id)) {
+            $persona_config['avatarId'] = $avatar_id;
+        }
+        
+        if (!empty($voice_id)) {
+            $persona_config['voiceId'] = $voice_id;
+        }
+        
+        if (!empty($llm_id)) {
+            $persona_config['llmId'] = $llm_id;
+        }
+        
+        if (!empty($system_prompt)) {
+            $persona_config['systemPrompt'] = $system_prompt;
+        }
+        
+        // Create session token request
+        $response = wp_remote_post('https://api.anam.ai/v1/auth/session-token', array(
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'Authorization' => 'Bearer ' . $api_key
+            ),
+            'body' => json_encode(array(
+                'personaConfig' => $persona_config
+            )),
+            'timeout' => 15,
+            'sslverify' => true
+        ));
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error('Failed to get session token: ' . $response->get_error_message());
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        
+        // Debug logging
+        error_log('Anam Session Token Response Code: ' . $response_code);
+        error_log('Anam Session Token Response Body: ' . $response_body);
+        
+        if ($response_code === 200 || $response_code === 201) {
+            $data = json_decode($response_body, true);
+            
+            if (isset($data['sessionToken'])) {
+                wp_send_json_success(array(
+                    'sessionToken' => $data['sessionToken']
+                ));
+            } else {
+                wp_send_json_error('Invalid response format');
+            }
+        } else {
+            wp_send_json_error('Session token request failed');
+        }
+    }
+
+    /**
+     * AJAX handler to get session data from Anam API
+     */
+    public function get_session_data() {
+        if (!wp_verify_nonce($_POST['nonce'], 'anam_session')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+
+        $session_id = sanitize_text_field($_POST['session_id']);
+        if (empty($session_id)) {
+            wp_send_json_error('No session ID provided');
+            return;
+        }
+
+        $api_key = get_option('anam_api_key');
+        if (empty($api_key)) {
+            wp_send_json_error('API key not configured');
+            return;
+        }
+
+        // Call Anam API to get session data
+        $response = wp_remote_get("https://api.anam.ai/v1/sessions/{$session_id}", array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'timeout' => 30
+        ));
+
+        if (is_wp_error($response)) {
+            wp_send_json_error('API request failed: ' . $response->get_error_message());
+            return;
+        }
+
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+
+        if ($response_code === 200) {
+            $session_data = json_decode($response_body, true);
+            
+            // Parse vehicle data from transcript
+            $vehicle_data = $this->parse_vehicle_data($session_data);
+            
+            wp_send_json_success(array(
+                'session_data' => $session_data,
+                'vehicle_data' => $vehicle_data,
+                'transcript' => isset($session_data['transcript']) ? $session_data['transcript'] : 'No transcript available'
+            ));
+        } else {
+            wp_send_json_error('Failed to fetch session data: HTTP ' . $response_code);
+        }
+    }
+
+    /**
+     * Parse vehicle data from session transcript
+     */
+    private function parse_vehicle_data($session_data) {
+        if (!isset($session_data['transcript']) || empty($session_data['transcript'])) {
+            return array('error' => 'No transcript data available');
+        }
+
+        $transcript = is_array($session_data['transcript']) ? 
+            implode(' ', array_column($session_data['transcript'], 'text')) : 
+            $session_data['transcript'];
+
+        $vehicle_data = array();
+
+        // VIN pattern (17 characters, alphanumeric)
+        if (preg_match('/\b[A-HJ-NPR-Z0-9]{17}\b/i', $transcript, $matches)) {
+            $vehicle_data['vin'] = strtoupper($matches[0]);
+        }
+
+        // Year pattern (4 digits, 1900-2030)
+        if (preg_match('/\b(19|20)\d{2}\b/', $transcript, $matches)) {
+            $vehicle_data['year'] = $matches[0];
+        }
+
+        // Make pattern (common car manufacturers)
+        $makes = array('toyota', 'honda', 'ford', 'chevrolet', 'nissan', 'bmw', 'mercedes', 'audi', 'volkswagen', 'hyundai', 'kia', 'mazda', 'subaru', 'lexus', 'acura', 'infiniti', 'cadillac', 'buick', 'gmc', 'jeep', 'ram', 'dodge', 'chrysler', 'lincoln', 'volvo', 'jaguar', 'land rover', 'porsche', 'tesla', 'mitsubishi');
+        foreach ($makes as $make) {
+            if (preg_match('/\b' . preg_quote($make, '/') . '\b/i', $transcript)) {
+                $vehicle_data['make'] = ucfirst($make);
+                break;
+            }
+        }
+
+        // Model pattern (word after make, if make found)
+        if (isset($vehicle_data['make'])) {
+            $pattern = '/\b' . preg_quote($vehicle_data['make'], '/') . '\s+([a-z0-9\-]+)/i';
+            if (preg_match($pattern, $transcript, $matches)) {
+                $vehicle_data['model'] = ucfirst($matches[1]);
+            }
+        }
+
+        return empty($vehicle_data) ? array('error' => 'No vehicle data found in transcript') : $vehicle_data;
+    }
+
+    /**
+     * AJAX handler to list sessions from Anam API
+     */
+    public function list_sessions() {
+        // Verify nonce
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+
+        // Get saved credentials
+        $options = get_option('anam_options', array());
+        $api_key = isset($options['api_key']) ? $options['api_key'] : '';
+        $auth_token = isset($options['auth_token']) ? $options['auth_token'] : '';
+        $persona_id = isset($options['persona_id']) ? $options['persona_id'] : '';
+
+        // Debug logging
+        error_log('=== LIST SESSIONS DEBUG ===');
+        error_log('List Sessions - API Key: ' . (empty($api_key) ? 'EMPTY' : 'Present (length: ' . strlen($api_key) . ')'));
+        error_log('List Sessions - Auth Token: ' . (empty($auth_token) ? 'EMPTY' : 'Present (length: ' . strlen($auth_token) . ')'));
+        error_log('List Sessions - Persona ID: ' . (empty($persona_id) ? 'EMPTY' : $persona_id));
+        error_log('List Sessions - Full options array keys: ' . implode(', ', array_keys($options)));
+
+        // Use api_key for Bearer token (it contains the base64-encoded token)
+        // auth_token is the UUID/apiKeyId, NOT the Bearer token
+        if (!empty($api_key)) {
+            $bearer_token = $api_key;
+            error_log('List Sessions - Using api_key for Bearer token');
+        } else {
+            wp_send_json_error('No API Key configured. Please add your API Key in Avatar Setup.');
+            return;
+        }
+
+        // Get pagination parameters
+        $page = isset($_POST['page']) ? intval($_POST['page']) : 1;
+        $per_page = isset($_POST['perPage']) ? intval($_POST['perPage']) : 10;
+
+        // Build API URL - no filters, just pagination
+        $api_url = 'https://api.anam.ai/v1/sessions?page=' . $page . '&perPage=' . $per_page;
+        
+        // TEMPORARILY DISABLED: personaId filter to see ALL sessions
+        // if (!empty($persona_id)) {
+        //     $api_url .= '&personaId=' . urlencode($persona_id);
+        //     error_log('List Sessions - Filtering by personaId: ' . $persona_id);
+        // }
+        
+        error_log('List Sessions - API URL: ' . $api_url);
+        error_log('List Sessions - Testing WITHOUT personaId filter to see all sessions');
+
+        // Make request to Anam API
+        $response = wp_remote_get($api_url, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $bearer_token,
+                'Content-Type' => 'application/json'
+            ),
+            'timeout' => 15
+        ));
+
+        if (is_wp_error($response)) {
+            error_log('List Sessions - WP Error: ' . $response->get_error_message());
+            wp_send_json_error('Failed to fetch sessions: ' . $response->get_error_message());
+            return;
+        }
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+
+        error_log('List Sessions - Status Code: ' . $status_code);
+        error_log('List Sessions - Raw Body: ' . substr($body, 0, 500)); // First 500 chars
+
+        if ($status_code !== 200) {
+            error_log('List Sessions - Non-200 status, full body: ' . $body);
+            wp_send_json_error('API returned error: ' . $status_code . ' - ' . $body);
+            return;
+        }
+
+        $data = json_decode($body, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('List Sessions - JSON Error: ' . json_last_error_msg());
+            wp_send_json_error('Failed to parse API response: ' . json_last_error_msg());
+            return;
+        }
+
+        // Debug: Log the parsed response structure
+        error_log('List Sessions - Parsed data keys: ' . implode(', ', array_keys($data)));
+        if (isset($data['data'])) {
+            error_log('List Sessions - Sessions count: ' . count($data['data']));
+        }
+
+        wp_send_json_success($data);
+    }
+    
+    /**
+     * AJAX handler to get individual session details with transcript
+     */
+    public function get_session_details() {
+        // Verify nonce
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = isset($_POST['sessionId']) ? sanitize_text_field($_POST['sessionId']) : '';
+        
+        if (empty($session_id)) {
+            wp_send_json_error('Session ID is required');
+            return;
+        }
+        
+        // Get saved transcript from database
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        
+        $transcript_row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE session_id = %s",
+            $session_id
+        ));
+        
+        $response_data = array(
+            'session_id' => $session_id,
+            'has_transcript' => false,
+            'transcript' => null,
+            'message_count' => 0,
+            'parsed' => false,
+            'parsed_at' => null
+        );
+        
+        if ($transcript_row) {
+            error_log('Raw transcript data: ' . substr($transcript_row->transcript_data, 0, 200));
+            $transcript_messages = json_decode($transcript_row->transcript_data, true);
+            
+            if ($transcript_messages === null) {
+                error_log('❌ JSON decode failed: ' . json_last_error_msg());
+                error_log('Raw data length: ' . strlen($transcript_row->transcript_data));
+            }
+            
+            $response_data['has_transcript'] = true;
+            $response_data['transcript'] = $transcript_messages;
+            $response_data['message_count'] = $transcript_row->message_count;
+            $response_data['created_at'] = $transcript_row->created_at;
+            $response_data['updated_at'] = $transcript_row->updated_at;
+            $response_data['parsed'] = (bool)$transcript_row->parsed;
+            $response_data['parsed_at'] = $transcript_row->parsed_at;
+            
+            error_log('✅ Transcript found for session: ' . $session_id . ' (' . $transcript_row->message_count . ' messages)');
+        } else {
+            error_log('⚠️ No transcript found for session: ' . $session_id);
+        }
+        
+        wp_send_json_success($response_data);
+    }
+    
+    /**
+     * AJAX handler to get session metadata from Anam API
+     */
+    public function get_session_metadata() {
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = isset($_POST['sessionId']) ? sanitize_text_field($_POST['sessionId']) : '';
+        
+        if (empty($session_id)) {
+            wp_send_json_error('Session ID is required');
+            return;
+        }
+        
+        $options = get_option('anam_options', array());
+        $api_key = isset($options['api_key']) ? $options['api_key'] : '';
+        
+        if (empty($api_key)) {
+            wp_send_json_error('API Key not configured');
+            return;
+        }
+        
+        $api_url = 'https://api.anam.ai/v1/sessions/' . urlencode($session_id);
+        
+        $response = wp_remote_get($api_url, array(
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type' => 'application/json'
+            ),
+            'timeout' => 15
+        ));
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error('Failed to fetch session metadata: ' . $response->get_error_message());
+            return;
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        
+        if ($status_code !== 200) {
+            wp_send_json_error('API returned error: ' . $status_code);
+            return;
+        }
+        
+        $data = json_decode($body, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            wp_send_json_error('Failed to parse API response');
+            return;
+        }
+        
+        wp_send_json_success($data);
+    }
+    
+    /**
+     * AJAX handler to save transcript data
+     */
+    public function save_transcript() {
+        // Verify nonce
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = isset($_POST['session_id']) ? sanitize_text_field($_POST['session_id']) : '';
+        $transcript_data = isset($_POST['transcript_data']) ? $_POST['transcript_data'] : '';
+        
+        if (empty($session_id)) {
+            wp_send_json_error('Session ID is required');
+            return;
+        }
+        
+        if (empty($transcript_data)) {
+            wp_send_json_error('Transcript data is required');
+            return;
+        }
+        
+        // Decode and validate transcript data
+        $messages = json_decode(stripslashes($transcript_data), true);
+        if (!$messages || !is_array($messages)) {
+            error_log('❌ Invalid transcript data received');
+            error_log('Raw data: ' . substr($transcript_data, 0, 200));
+            wp_send_json_error('Invalid transcript data');
+            return;
+        }
+        
+        // Re-encode as clean JSON for storage
+        $clean_json = json_encode($messages);
+        
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        
+        // Check if transcript already exists for this session
+        $existing = $wpdb->get_row($wpdb->prepare(
+            "SELECT id FROM $table_name WHERE session_id = %s",
+            $session_id
+        ));
+        
+        $message_count = count($messages);
+        
+        if ($existing) {
+            // Update existing transcript
+            $result = $wpdb->update(
+                $table_name,
+                array(
+                    'transcript_data' => $clean_json,
+                    'message_count' => $message_count,
+                    'updated_at' => current_time('mysql')
+                ),
+                array('session_id' => $session_id),
+                array('%s', '%d', '%s'),
+                array('%s')
+            );
+        } else {
+            // Insert new transcript
+            $result = $wpdb->insert(
+                $table_name,
+                array(
+                    'session_id' => $session_id,
+                    'transcript_data' => $clean_json,
+                    'message_count' => $message_count,
+                    'created_at' => current_time('mysql'),
+                    'updated_at' => current_time('mysql')
+                ),
+                array('%s', '%s', '%d', '%s', '%s')
+            );
+        }
+        
+        if ($result === false) {
+            error_log('❌ Failed to save transcript: ' . $wpdb->last_error);
+            wp_send_json_error('Database error: ' . $wpdb->last_error);
+            return;
+        }
+        
+        error_log('✅ Transcript saved for session: ' . $session_id . ' (' . $message_count . ' messages)');
+        
+        // Send email notification if enabled and this is a new transcript
+        if (!$existing) {
+            $this->send_session_notification($session_id, $message_count);
+        }
+        
+        wp_send_json_success(array(
+            'message' => 'Transcript saved successfully',
+            'session_id' => $session_id,
+            'message_count' => $message_count
+        ));
+    }
+    
+    /**
+     * Send email notification when a session completes
+     */
+    private function send_session_notification($session_id, $message_count) {
+        // Always send to WordPress admin email
+        $admin_email = get_option('admin_email');
+        
+        if (empty($admin_email)) {
+            return;
+        }
+        
+        // Build the email
+        $site_name = get_bloginfo('name');
+        $transcripts_url = admin_url('admin.php?page=anam-sessions&view_session=' . urlencode($session_id));
+        
+        $subject = sprintf('[%s] New Chat Session Completed', $site_name);
+        
+        $message = "A new chat session has been completed on your website.\n\n";
+        $message .= "Session Details:\n";
+        $message .= "- Session ID: {$session_id}\n";
+        $message .= "- Message Count: {$message_count}\n";
+        $message .= "- Time: " . current_time('mysql') . "\n\n";
+        $message .= "View the full transcript here:\n";
+        $message .= $transcripts_url . "\n\n";
+        $message .= "---\n";
+        $message .= "This is an automated notification from {$site_name}";
+        
+        $headers = array('Content-Type: text/plain; charset=UTF-8');
+        
+        // Send the email
+        $sent = wp_mail($admin_email, $subject, $message, $headers);
+        
+        if ($sent) {
+            error_log('✅ Session notification email sent to: ' . $admin_email);
+        } else {
+            error_log('❌ Failed to send session notification email');
+        }
+    }
+    
+    /**
+     * AJAX handler to parse transcript and send to Google AI Studio
+     */
+    public function parse_transcript() {
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+        
+        $session_id = isset($_POST['sessionId']) ? sanitize_text_field($_POST['sessionId']) : '';
+        
+        if (empty($session_id)) {
+            wp_send_json_error('Session ID is required');
+            return;
+        }
+        
+        // Get transcript from database
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        
+        $transcript_row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE session_id = %s",
+            $session_id
+        ));
+        
+        if (!$transcript_row) {
+            wp_send_json_error('Transcript not found');
+            return;
+        }
+        
+        // Check if already parsed
+        if ($transcript_row->parsed) {
+            wp_send_json_error('This transcript has already been parsed on ' . $transcript_row->parsed_at);
+            return;
+        }
+        
+        $transcript_data = json_decode($transcript_row->transcript_data, true);
+        
+        if (!$transcript_data) {
+            wp_send_json_error('Invalid transcript data');
+            return;
+        }
+        
+        // Get session metadata if provided
+        $session_metadata = isset($_POST['sessionMetadata']) ? json_decode(stripslashes($_POST['sessionMetadata']), true) : null;
+        
+        // Build payload for Google AI Studio
+        $payload = array(
+            'session_id' => $session_id,
+            'transcript' => $transcript_data,
+            'session_metadata' => $session_metadata,
+            'user_profile' => array(
+                'first_name' => 'Nick',
+                'last_name' => 'Patterson',
+                'phone' => '(912) 233-1234'
+            ),
+            'timestamp' => current_time('c')
+        );
+        
+        // Get parser endpoint URL from settings
+        $options = get_option($this->option_name, array());
+        $parser_url = isset($options['parser_endpoint_url']) ? $options['parser_endpoint_url'] : 'https://iegsoumvmhvvhmdyxhxs.supabase.co/functions/v1/key-value-processor';
+        
+        if (empty($parser_url)) {
+            wp_send_json_error('Parser endpoint URL not configured. Please set it in Database Integration settings.');
+            return;
+        }
+        
+        $response = wp_remote_post($parser_url, array(
+            'headers' => array(
+                'Content-Type' => 'application/json'
+            ),
+            'body' => json_encode($payload),
+            'timeout' => 60
+        ));
+        
+        if (is_wp_error($response)) {
+            wp_send_json_error('Failed to connect to parser: ' . $response->get_error_message());
+            return;
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        
+        error_log('Parser response code: ' . $response_code);
+        error_log('Parser response body: ' . substr($response_body, 0, 500));
+        
+        if ($response_code !== 200) {
+            // Try to extract meaningful error from HTML if present
+            $error_msg = 'Parser returned error code ' . $response_code;
+            if (strpos($response_body, '<html') !== false) {
+                $error_msg .= ' (HTML error page returned - parser may be down)';
+            } else {
+                $error_msg .= ': ' . substr($response_body, 0, 200);
+            }
+            wp_send_json_error($error_msg);
+            return;
+        }
+        
+        // Mark transcript as parsed
+        $updated = $wpdb->update(
+            $table_name,
+            array(
+                'parsed' => 1,
+                'parsed_at' => current_time('mysql')
+            ),
+            array('session_id' => $session_id),
+            array('%d', '%s'),
+            array('%s')
+        );
+        
+        if ($updated === false) {
+            error_log('❌ Failed to mark transcript as parsed for session: ' . $session_id);
+        } else {
+            error_log('✅ Transcript marked as parsed for session: ' . $session_id);
+        }
+        
+        wp_send_json_success(array(
+            'message' => 'Transcript parsed successfully',
+            'parser_response' => json_decode($response_body, true),
+            'parsed_at' => current_time('mysql')
+        ));
+    }
+
+    /**
+     * AJAX handler to reset plugin to default state
+     */
+    public function reset_plugin() {
+        // Verify nonce
+        if (!check_ajax_referer('anam_session', 'nonce', false)) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
+
+        global $wpdb;
+        
+        // 1. Clear ALL options from wp_options
+        delete_option('anam_options');
+        error_log('🗑️ RESET: Deleted all plugin options from wp_options');
+        
+        // 2. Clear ALL transcripts from wp_anam_transcripts table
+        $table_name = $wpdb->prefix . 'anam_transcripts';
+        $deleted = $wpdb->query("TRUNCATE TABLE {$table_name}");
+        error_log('🗑️ RESET: Cleared all transcripts from database');
+        
+        // 3. Set transient for success notice
+        set_transient('anam_reset_notice', true, 45);
+        
+        wp_send_json_success(array(
+            'message' => 'Plugin reset successfully. All settings and transcripts have been cleared.',
+            'redirect' => admin_url('admin.php?page=anam-settings')
+        ));
+    }
     
     /**
      * Disable page caching for pages with avatar
