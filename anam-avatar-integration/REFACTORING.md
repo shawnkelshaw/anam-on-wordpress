@@ -1,7 +1,7 @@
 # Refactoring Plan - Anam WordPress Plugin
 
-**Status:** Phase 1 Complete ✅  
-**Version:** 2.1.0  
+**Status:** Phase 2 Complete ✅  
+**Version:** 2.2.0  
 **Date:** November 6, 2025
 
 ---
@@ -123,56 +123,53 @@ This switches back to `main` branch with original working code.
 
 ---
 
-## Phase 2: PHP Class Extraction (PLANNED)
+## Phase 2: PHP Class Extraction ✅ COMPLETE
 
-**Status:** Not Started  
-**Priority:** Medium  
-**Estimated Time:** 4-5 hours
+**Status:** Complete  
+**Version:** 2.2.0  
+**Completion Date:** November 6, 2025  
+**Branch:** `refactor-php-classes-phase2` (merged to main)
 
-### Proposed Structure
+### Implementation Summary
+
+**Metrics:**
+- Main file reduced: 2,131 → 1,229 lines (-902 lines, -42.3%)
+- Total reduction from v2.0.0: 3,209 → 1,229 lines (-61.7%)
+- Classes created: 2 (Database, AJAX Handlers)
+- Lines extracted: 595 lines
+
+### Actual Structure
 
 ```
 includes/
-├── class-admin-pages.php       # Render admin UI (~300 lines)
-├── class-ajax-handlers.php     # All AJAX endpoints (~500 lines)
-├── class-database.php          # Database operations (~300 lines)
-├── class-settings.php          # Settings management (~400 lines)
-└── class-frontend.php          # Frontend rendering (~400 lines)
+├── class-database.php          # Database operations (165 lines) ✅
+└── class-ajax-handlers.php     # All AJAX endpoints (430 lines) ✅
 ```
 
-### Responsibilities
+**Note:** Only Database and AJAX handlers were extracted. Settings, Admin Pages, and Frontend classes were deemed unnecessary as the remaining code in the main file is well-organized and manageable at 1,229 lines.
 
-#### class-admin-pages.php
-- `render_sessions_page()`
-- `render_settings_page()`
-- `render_display_settings_page()`
-- `render_supabase_config_page()`
+### Classes Implemented
 
-#### class-ajax-handlers.php
-- `get_session_token()`
-- `list_sessions()`
-- `get_session_details()`
-- `get_session_metadata()`
-- `save_transcript()`
-- `parse_transcript()`
+#### class-database.php (165 lines)
+- `get_table_name()` - Get transcripts table name
+- `ensure_table_exists()` - Auto-create table if missing
+- `create_table()` - Create database table with schema
+- `get_transcript()` - Retrieve transcript by session ID
+- `save_transcript()` - Save or update transcript data
+- `mark_as_parsed()` - Mark transcript as parsed with timestamp
+- `drop_table()` - Clean uninstall support
 
-#### class-database.php
-- `create_transcripts_table()`
-- `ensure_transcripts_table_exists()`
-- `get_transcript_by_session()`
-- `save_transcript_data()`
-- `update_parsed_status()`
-
-#### class-settings.php
-- `init_settings()`
-- `sanitize_settings()`
-- All field rendering methods
-- Settings validation
-
-#### class-frontend.php
-- `render_frontend_avatar()`
-- `enqueue_frontend_scripts()`
-- Display method logic
+#### class-ajax-handlers.php (430 lines)
+- Singleton pattern for instance persistence
+- `register_hooks()` - Register all AJAX actions
+- `get_session_token()` - Generate session tokens from Anam API
+- `list_sessions()` - Fetch sessions list from Anam API
+- `get_session_details()` - Get transcript from database
+- `get_session_metadata()` - Fetch session JSON from Anam API
+- `save_transcript()` - Store conversation data to database
+- `parse_transcript()` - Send transcript to parser endpoint
+- `reset_plugin()` - Delete all plugin data
+- `get_session_data()` - Deprecated method (kept for compatibility)
 
 ### Benefits
 

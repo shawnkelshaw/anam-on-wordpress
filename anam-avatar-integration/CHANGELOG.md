@@ -2,6 +2,65 @@
 
 All notable changes to the Anam.ai WordPress Integration plugin will be documented in this file.
 
+## [2.2.0] - 2025-11-06
+
+### 🏗️ Architecture Refactoring - Phase 2: PHP Class Extraction
+
+This release completes the major refactoring by extracting PHP code into separate classes.
+
+### Changed
+
+#### Class Architecture
+- **Created `includes/class-database.php`** (165 lines) - All database operations
+- **Created `includes/class-ajax-handlers.php`** (430 lines) - All AJAX endpoints
+- **Reduced main PHP file** from 2,131 to 1,229 lines (-902 lines, -42.3%)
+- **Total reduction from v2.0.0**: 3,209 → 1,229 lines (-61.7%)
+
+#### Database Class
+- `get_table_name()` - Get transcripts table name
+- `ensure_table_exists()` - Auto-create table if missing
+- `create_table()` - Create database table
+- `get_transcript()` - Retrieve transcript by session ID
+- `save_transcript()` - Save or update transcript
+- `mark_as_parsed()` - Mark transcript as parsed
+- `drop_table()` - Clean uninstall
+
+#### AJAX Handlers Class
+- Singleton pattern for instance persistence
+- `get_session_token()` - Generate session tokens
+- `list_sessions()` - Fetch sessions from Anam API
+- `get_session_details()` - Get transcript from database
+- `get_session_metadata()` - Fetch session JSON from API
+- `save_transcript()` - Store conversation data
+- `parse_transcript()` - Send to parser endpoint
+- `reset_plugin()` - Delete all data
+
+### Fixed
+- **Nonce mismatch bug** - Changed from `anam_session` to `anam_admin_nonce`
+- **Singleton pattern** - AJAX handler instance now persists correctly
+- **Sessions loading** - Chat Transcripts page now loads sessions properly
+
+### Benefits
+- ✅ **Single Responsibility** - Each class has one clear purpose
+- ✅ **Easier Testing** - Can test classes in isolation
+- ✅ **Better Organization** - Related code grouped together
+- ✅ **Reduced Complexity** - Smaller files easier to understand
+- ✅ **Maintainability** - 61.7% reduction in main file size
+
+### Testing
+- ✅ Sessions load correctly on Chat Transcripts page
+- ✅ All AJAX endpoints working
+- ✅ Database operations functional
+- ✅ Transcript saving and parsing works
+- ✅ Frontend avatar displays and captures
+
+### Documentation
+- ✅ Updated CHANGELOG.md with v2.2.0
+- ✅ Updated README.md with class structure
+- ✅ Updated REFACTORING.md with Phase 2 completion
+
+---
+
 ## [2.1.0] - 2025-11-06
 
 ### 🏗️ Architecture Refactoring - Phase 1: JavaScript Extraction

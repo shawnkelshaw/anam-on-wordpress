@@ -27,14 +27,17 @@ A comprehensive WordPress plugin for integrating Anam.ai digital avatars using t
 
 ## 🔧 Plugin Files
 
-### Core Files
+### Core Files (v2.2.0)
 ```
 anam-avatar-integration/
+├── includes/
+│   ├── class-database.php        # Database operations (165 lines)
+│   └── class-ajax-handlers.php   # AJAX endpoints (430 lines)
 ├── assets/
 │   └── js/
 │       ├── admin.js              # Admin interface (542 lines)
 │       └── frontend.js           # Frontend avatar logic (1,098 lines)
-├── anam-admin-settings.php       # Main plugin file (2,131 lines)
+├── anam-admin-settings.php       # Main plugin file (1,229 lines)
 ├── anam-transcript-handler.php   # Transcript feature handler
 ├── anam-getting-started.js       # Getting Started page
 └── uninstall.php                 # Clean uninstall
@@ -43,11 +46,24 @@ anam-avatar-integration/
 ### Main Plugin (Production Ready)
 - **`anam-admin-settings.php`** - ✅ **Primary Plugin** - Complete WordPress integration with:
   - Full admin interface with 4 settings pages
-  - Real-time transcript capture and storage
-  - Session management and viewing
-  - AI parsing integration
-  - Database table auto-creation
-  - Modular JavaScript architecture
+  - Settings management and sanitization
+  - Frontend avatar rendering
+  - Script enqueuing
+  - **61.7% smaller** than v2.0.0 (3,209 → 1,229 lines)
+
+### PHP Class Architecture (Refactored v2.2)
+- **`includes/class-database.php`** - Database operations
+  - Table creation and management
+  - Transcript CRUD operations
+  - Parse status tracking
+  - Clean uninstall support
+  
+- **`includes/class-ajax-handlers.php`** - AJAX endpoints
+  - Session token generation
+  - Sessions list from Anam API
+  - Transcript saving and retrieval
+  - Parse transcript integration
+  - Singleton pattern for persistence
 
 ### JavaScript Architecture (Refactored v2.1)
 - **`assets/js/admin.js`** - Admin interface functionality
