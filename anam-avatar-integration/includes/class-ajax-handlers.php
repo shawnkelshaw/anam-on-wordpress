@@ -15,12 +15,23 @@ if (!defined('ABSPATH')) {
 class Anam_Ajax_Handlers {
     
     private $option_name = 'anam_options';
+    private static $instance = null;
+    
+    /**
+     * Get singleton instance
+     */
+    public static function get_instance() {
+        if (self::$instance === null) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
     
     /**
      * Register AJAX hooks
      */
     public static function register_hooks() {
-        $instance = new self();
+        $instance = self::get_instance();
         
         // Session token generation
         add_action('wp_ajax_anam_get_session_token', array($instance, 'get_session_token'));
