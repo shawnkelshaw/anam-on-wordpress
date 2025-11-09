@@ -2,6 +2,9 @@ jQuery(document).ready(function($) {
     
     console.log('🎯 Anam Admin - Simple Version Loading...');
     
+    // Track current page for sessions list
+    let currentPage = 1;
+    
     // ============================================================================
     // BASIC STATE MANAGEMENT - NO COMPLEX CONDITIONAL LOGIC
     // ============================================================================
@@ -123,6 +126,9 @@ jQuery(document).ready(function($) {
         // Only run on sessions page
         if ($('#sessions-container').length === 0) return;
         
+        // Store current page
+        currentPage = page;
+        
         // Check if ANAM_CONFIG exists
         if (typeof ANAM_CONFIG === 'undefined') {
             console.error('❌ ANAM_CONFIG is not defined!');
@@ -177,13 +183,15 @@ jQuery(document).ready(function($) {
                         const updatedAt = session.updatedAt ? new Date(session.updatedAt).toLocaleString() : 'N/A';
                         const clientLabel = session.clientLabel || 'N/A';
                         const sessionId = session.id || 'N/A';
+                        const isParsed = session.parsed || false;
                         
                         html += '<tr>';
                         html += '<td><code>' + sessionId + '</code></td>';
                         html += '<td>' + createdAt + '</td>';
                         html += '<td>' + updatedAt + '</td>';
                         html += '<td>' + clientLabel + '</td>';
-                        html += '<td style="text-align: center;"><button class="button button-small view-session" data-session-id="' + sessionId + '">View</button></td>';
+                        html += '<td style="text-align: center;"><button class="button button-small view-session" data-session-id="' + sessionId + '">Review and parse</button></td>';
+                        html += '<td style="text-align: center;">' + (isParsed ? '<span style="color: #46b450; font-size: 18px;" title="Parsed">✓</span>' : '') + '</td>';
                         html += '</tr>';
                     });
                     
@@ -266,6 +274,9 @@ jQuery(document).ready(function($) {
         $('.nav-tab').removeClass('nav-tab-active').css('background', '');
         $('.nav-tab[data-tab="transcript"]').addClass('nav-tab-active').css('background', 'white');
         
+        // Update Session ID display above tabs
+        $('#current-session-id').text(sessionId);
+        
         // Reset content to loading state
         $('#session-details-content').html(
             '<div style="text-align: center; padding: 40px;">' +
@@ -281,7 +292,7 @@ jQuery(document).ready(function($) {
             data: {
                 action: 'anam_get_session_details',
                 nonce: ANAM_CONFIG.nonce,
-                sessionId: sessionId
+                session_id: sessionId
             },
             success: function(response) {
                 console.log('✅ Session details received:', response);
@@ -298,7 +309,7 @@ jQuery(document).ready(function($) {
                     // Build transcript tab content (formatted view)
                     let transcriptHtml = '';
                     if (data.has_transcript && data.transcript && data.transcript.length > 0) {
-                        transcriptHtml += '<p style="color: #666; margin-bottom: 20px;">Session ID: <code>' + sessionId + '</code> | ' + data.message_count + ' messages</p>';
+                        transcriptHtml += '<p style="color: #666; margin-bottom: 20px;">' + data.message_count + ' messages</p>';
                         transcriptHtml += '<div style="max-height: 500px; overflow-y: auto;">';
                         
                         data.transcript.forEach(function(msg) {
@@ -315,21 +326,20 @@ jQuery(document).ready(function($) {
                         
                         transcriptHtml += '</div>';
                     } else {
-                        transcriptHtml = '<div style="text-align: center; padding: 40px;">' +
-                            '<div style="font-size: 48px; margin-bottom: 20px;">💬</div>' +
-                            '<h3 style="color: #666;">No Transcript Available</h3>' +
-                            '<p style="color: #999;">This session does not have a saved transcript.</p>' +
-                            '<p style="color: #999; font-size: 13px;">Transcripts are captured when users interact with the avatar on your site.</p>' +
+                        transcriptHtml = '<div class="notice notice-error" style="margin: 20px 0;">' +
+                            '<p><strong>Failed to load transcripts either because no transcript exists or the transcript has been deleted from WordPress table due to a plugin reset.</strong></p>' +
                             '</div>';
                     }
                     
                     // Build transcript JSON tab content
-                    let transcriptJsonHtml = '<p style="color: #666; margin-bottom: 20px;">Session ID: <code>' + sessionId + '</code></p>';
+                    let transcriptJsonHtml = '';
                     if (data.has_transcript && data.transcript) {
                         transcriptJsonHtml += '<pre style="background: #f5f5f5; padding: 15px; border-radius: 4px; overflow-x: auto; max-height: 500px;">' + 
                             escapeHtml(JSON.stringify(data.transcript, null, 2)) + '</pre>';
                     } else {
-                        transcriptJsonHtml += '<p style="color: #999;">No transcript data available.</p>';
+                        transcriptJsonHtml += '<div class="notice notice-error" style="margin: 20px 0;">' +
+                            '<p><strong>Failed to load transcripts either because no transcript exists or the transcript has been deleted from WordPress table due to a plugin reset.</strong></p>' +
+                            '</div>';
                     }
                     
                     // Build session JSON tab content (placeholder - will load on demand)
@@ -342,13 +352,17 @@ jQuery(document).ready(function($) {
                     html += '<div id="transcript-tab-content">' + transcriptHtml + '</div>';
                     html += '<div id="transcript-json-tab-content" style="display: none;">' + transcriptJsonHtml + '</div>';
                     
-                    // Add Parse Chat button at bottom right
-                    html += '<div style="text-align: right; margin-top: 20px; padding-top: 15px; border-top: 1px solid #ddd;">';
+                    // Add Parse Chat button
+                    html += '<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd; text-align: right;">';
                     
-                    if (data.parsed) {
-                        // Already parsed - show disabled green button
+                    if (data.parsed == 1) {
+                        // Already parsed - show info message and disabled button
+                        html += '<div style="background: #e7f7ff; border-left: 4px solid #00a0d2; padding: 12px; margin-bottom: 15px; text-align: left;">';
+                        html += '<p style="margin: 0; color: #00a0d2;"><strong>ℹ️ This chat has already been parsed</strong></p>';
+                        html += '<p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">Parsed on: ' + data.parsed_at + '</p>';
+                        html += '</div>';
                         html += '<button type="button" class="button" id="parse-chat-btn" disabled style="padding: 8px 20px; background: #46b450; border-color: #46b450; color: white; cursor: not-allowed;">';
-                        html += '✓ Parsed on ' + data.parsed_at + '</button>';
+                        html += '✓ Parsed</button>';
                     } else {
                         // Not parsed yet - show active button
                         html += '<button type="button" class="button button-primary" id="parse-chat-btn" style="padding: 8px 20px;">';
@@ -401,7 +415,7 @@ jQuery(document).ready(function($) {
             data: {
                 action: 'anam_get_session_metadata',
                 nonce: ANAM_CONFIG.nonce,
-                sessionId: sessionId
+                session_id: sessionId
             },
             success: function(response) {
                 if (response.success && response.data) {
@@ -451,21 +465,20 @@ jQuery(document).ready(function($) {
             data: {
                 action: 'anam_parse_transcript',
                 nonce: ANAM_CONFIG.nonce,
-                sessionId: sessionId,
+                session_id: sessionId,
                 sessionMetadata: sessionMetadata ? JSON.stringify(sessionMetadata) : null
             },
             success: function(response) {
                 console.log('✅ Parse response:', response);
                 
                 if (response.success) {
-                    alert('✅ Transcript parsed successfully!\n\nData has been sent to Google AI Studio and saved to Supabase.');
+                    // Close the modal
+                    $('#session-details-modal').hide();
                     
-                    // Update button to show parsed state
-                    $button.text('✓ Parsed').css({
-                        'background': '#46b450',
-                        'border-color': '#46b450',
-                        'cursor': 'not-allowed'
-                    });
+                    // Reload the sessions table after a brief delay to ensure DB is updated
+                    setTimeout(function() {
+                        loadSessions(currentPage);
+                    }, 500);
                     
                     console.log('Parser response:', response.data.parser_response);
                 } else {

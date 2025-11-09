@@ -90,9 +90,8 @@ class Anam_Ajax_Handlers {
             $persona_config['llmId'] = $options['llm_id'];
         }
         
-        $persona_config['systemPrompt'] = !empty($options['system_prompt']) 
-            ? $options['system_prompt'] 
-            : 'You are a helpful digital assistant.';
+        // Do NOT override systemPrompt - use the persona's configured prompt from Anam Labs
+        // This ensures tool calling instructions configured in Anam Labs are preserved
             
         $persona_config['name'] = 'WordPress Avatar';
         
@@ -182,11 +181,32 @@ class Anam_Ajax_Handlers {
         }
         
         $data = json_decode($response_body, true);
+        
+        // Add parsed status for each session from WordPress database
+        if (isset($data['data']) && is_array($data['data'])) {
+            foreach ($data['data'] as &$session) {
+                $session_id = $session['id'];
+                $transcript = Anam_Database::get_transcript($session_id);
+                
+                if ($transcript) {
+                    $parsed_value = $transcript->parsed;
+                    $parsed_type = gettype($parsed_value);
+                    $is_parsed = ($parsed_value == 1 || $parsed_value === '1' || $parsed_value === 1);
+                    $session['parsed'] = $is_parsed;
+                    error_log("📊 Session {$session_id}: parsed_value={$parsed_value}, type={$parsed_type}, is_parsed=" . ($is_parsed ? 'TRUE' : 'FALSE'));
+                } else {
+                    $session['parsed'] = false;
+                    error_log("📊 Session {$session_id}: NO TRANSCRIPT IN DATABASE");
+                }
+            }
+        }
+        
         wp_send_json_success($data);
     }
     
     /**
      * Get session details (transcript from database)
+     * Always returns success so modal can open and Session JSON tab works
      */
     public function get_session_details() {
         check_ajax_referer('anam_admin_nonce', 'nonce');
@@ -200,13 +220,27 @@ class Anam_Ajax_Handlers {
         
         $transcript = Anam_Database::get_transcript($session_id);
         
+        // Always return success, even if no transcript exists
+        // This allows the modal to open and Session JSON tab to work
         if (!$transcript) {
-            wp_send_json_error('No transcript found for this session');
+            wp_send_json_success(array(
+                'has_transcript' => false,
+                'transcript' => array(),
+                'message_count' => 0,
+                'parsed' => 0,
+                'parsed_at' => null,
+                'created_at' => null,
+                'no_transcript_message' => 'No transcript found. Either no transcript exists or it was deleted during a plugin reset.'
+            ));
             return;
         }
         
+        // Parse transcript JSON
+        $transcript_array = json_decode($transcript->transcript_data, true);
+        
         wp_send_json_success(array(
-            'transcript_data' => $transcript->transcript_data,
+            'has_transcript' => !empty($transcript_array),
+            'transcript' => $transcript_array,
             'message_count' => $transcript->message_count,
             'parsed' => $transcript->parsed,
             'parsed_at' => $transcript->parsed_at,
@@ -271,7 +305,7 @@ class Anam_Ajax_Handlers {
         }
         
         $session_id = isset($_POST['session_id']) ? sanitize_text_field($_POST['session_id']) : '';
-        $transcript_data = isset($_POST['transcript']) ? $_POST['transcript'] : '';
+        $transcript_data = isset($_POST['transcript_data']) ? $_POST['transcript_data'] : '';
         
         if (empty($session_id) || empty($transcript_data)) {
             wp_send_json_error('Session ID and transcript data are required');
@@ -289,15 +323,91 @@ class Anam_Ajax_Handlers {
         $clean_json = json_encode($messages);
         $message_count = count($messages);
         
+        // Check if this is a new transcript (not an update)
+        $existing = Anam_Database::get_transcript($session_id);
+        
         $success = Anam_Database::save_transcript($session_id, $clean_json, $message_count);
         
         if ($success) {
+            // Send email notification for new sessions only
+            if (!$existing) {
+                $this->send_session_notification($session_id, $message_count);
+            }
+            
             wp_send_json_success(array(
                 'message' => 'Transcript saved successfully',
                 'message_count' => $message_count
             ));
         } else {
             wp_send_json_error('Failed to save transcript');
+        }
+    }
+    
+    /**
+     * Send email notification when a session completes
+     */
+    private function send_session_notification($session_id, $message_count) {
+        // Get WordPress admin email
+        $admin_email = get_option('admin_email');
+        
+        if (empty($admin_email)) {
+            error_log('⚠️ Cannot send session notification: No admin email configured');
+            return;
+        }
+        
+        // Get session metadata from Anam API to calculate duration
+        $options = get_option('anam_options', array());
+        $duration = 'N/A';
+        $created_at = current_time('mysql');
+        
+        if (!empty($options['api_key'])) {
+            $url = 'https://api.anam.ai/v1/sessions/' . $session_id;
+            $args = array(
+                'headers' => array('Authorization' => 'Bearer ' . $options['api_key']),
+                'timeout' => 10
+            );
+            $response = wp_remote_get($url, $args);
+            
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                $session_data = json_decode(wp_remote_retrieve_body($response), true);
+                if (isset($session_data['createdAt']) && isset($session_data['updatedAt'])) {
+                    $created = strtotime($session_data['createdAt']);
+                    $updated = strtotime($session_data['updatedAt']);
+                    $duration_seconds = $updated - $created;
+                    $duration = gmdate('i:s', $duration_seconds) . ' (mm:ss)';
+                    $created_at = date('Y-m-d H:i:s', $created);
+                }
+            }
+        }
+        
+        // Build the email
+        $site_name = get_bloginfo('name');
+        $transcripts_url = admin_url('admin.php?page=anam-sessions');
+        
+        $subject = sprintf('[%s] New Chat Session Completed', $site_name);
+        
+        $message = "A new chat session has been completed on your website.\n\n";
+        $message .= "Session Details:\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+        $message .= "📅 Date/Time: {$created_at}\n";
+        $message .= "🆔 Session ID: {$session_id}\n";
+        $message .= "⏱️  Duration: {$duration}\n";
+        $message .= "💬 Messages: {$message_count}\n";
+        $message .= "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
+        $message .= "View all transcripts here:\n";
+        $message .= $transcripts_url . "\n\n";
+        $message .= "---\n";
+        $message .= "This is an automated notification from {$site_name}";
+        
+        $headers = array('Content-Type: text/plain; charset=UTF-8');
+        
+        // Send the email
+        $sent = wp_mail($admin_email, $subject, $message, $headers);
+        
+        if ($sent) {
+            error_log('✅ Session notification email sent to: ' . $admin_email . ' for session: ' . $session_id);
+        } else {
+            error_log('❌ Failed to send session notification email for session: ' . $session_id);
         }
     }
     
@@ -319,7 +429,7 @@ class Anam_Ajax_Handlers {
         $transcript = Anam_Database::get_transcript($session_id);
         
         if (!$transcript) {
-            wp_send_json_error('No transcript found for this session');
+            wp_send_json_error('Failed to load transcripts either because no transcript exists or the transcript has been deleted from WordPress table due to a plugin reset.');
             return;
         }
         
@@ -330,9 +440,10 @@ class Anam_Ajax_Handlers {
         }
         
         // Get parser endpoint URL
-        $parser_url = isset($options['parser_endpoint_url']) ? $options['parser_endpoint_url'] : '';
+        $parser_url = isset($options['parser_endpoint_url']) ? trim($options['parser_endpoint_url']) : '';
         
         if (empty($parser_url)) {
+            error_log('Parser URL empty. Options: ' . print_r($options, true));
             wp_send_json_error('Parser endpoint URL not configured');
             return;
         }
@@ -392,11 +503,17 @@ class Anam_Ajax_Handlers {
         }
         
         // Mark as parsed
-        Anam_Database::mark_as_parsed($session_id);
+        $marked = Anam_Database::mark_as_parsed($session_id);
+        error_log("✅ Parse successful for session {$session_id}. Marked as parsed: " . ($marked ? 'YES' : 'NO'));
+        
+        if (!$marked) {
+            error_log("❌ WARNING: Failed to mark session {$session_id} as parsed in database!");
+        }
         
         wp_send_json_success(array(
             'message' => 'Transcript parsed successfully',
-            'parsed_at' => current_time('mysql')
+            'parsed_at' => current_time('mysql'),
+            'marked_as_parsed' => $marked
         ));
     }
     
@@ -417,7 +534,10 @@ class Anam_Ajax_Handlers {
         // Drop database table
         Anam_Database::drop_table();
         
-        wp_send_json_success('Plugin reset successfully');
+        wp_send_json_success(array(
+            'message' => 'Plugin reset successfully',
+            'redirect' => admin_url('admin.php?page=anam-settings')
+        ));
     }
     
     /**

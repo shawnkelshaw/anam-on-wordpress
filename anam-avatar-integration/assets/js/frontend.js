@@ -343,6 +343,31 @@ async function initElementIdAvatar() {
             updateTranscriptDebugBox(messages);
         });
         
+        // Add listener for client tool calls (redirects, etc.)
+        anamClient.addListener(AnamEvent.CLIENT_TOOL_EVENT_RECEIVED, (event) => {
+            // Enhanced debugging as recommended by Anam docs
+            console.group('🔧 Tool Call');
+            console.log('Tool:', event.eventName);
+            console.log('Arguments:', event.eventData);
+            console.log('Timestamp:', new Date().toISOString());
+            console.groupEnd();
+            
+            // Handle tool calls with switch statement
+            switch(event.eventName) {
+                case 'redirect_to_calendar':
+                    if (event.eventData && event.eventData.url) {
+                        console.log('🔀 Redirecting to calendar:', event.eventData.url);
+                        window.location.href = event.eventData.url;
+                    } else {
+                        console.error('❌ redirect_to_calendar called but no URL provided');
+                    }
+                    break;
+                    
+                default:
+                    console.warn('⚠️ Unknown tool called:', event.eventName);
+            }
+        });
+        
         // Add listener for when streaming starts (session ID might be available then)
         anamClient.addListener(AnamEvent.STREAM_STARTED, (event) => {
             console.log('🎬 Stream started, checking for session ID again...');
@@ -959,6 +984,31 @@ async function initAvatar() {
             if (anamClient.sessionId) {
                 currentSessionId = anamClient.sessionId;
                 console.log('📋 Session ID captured:', currentSessionId);
+            }
+        });
+        
+        // Add listener for client tool calls (redirects, etc.)
+        anamClient.addListener(AnamEvent.CLIENT_TOOL_EVENT_RECEIVED, (event) => {
+            // Enhanced debugging as recommended by Anam docs
+            console.group('🔧 Tool Call');
+            console.log('Tool:', event.eventName);
+            console.log('Arguments:', event.eventData);
+            console.log('Timestamp:', new Date().toISOString());
+            console.groupEnd();
+            
+            // Handle tool calls with switch statement
+            switch(event.eventName) {
+                case 'redirect_to_calendar':
+                    if (event.eventData && event.eventData.url) {
+                        console.log('🔀 Redirecting to calendar:', event.eventData.url);
+                        window.location.href = event.eventData.url;
+                    } else {
+                        console.error('❌ redirect_to_calendar called but no URL provided');
+                    }
+                    break;
+                    
+                default:
+                    console.warn('⚠️ Unknown tool called:', event.eventName);
             }
         });
         

@@ -25,9 +25,9 @@ delete_option('anam_options');           // Main settings (API key, persona ID, 
 delete_option('anam_api_verified');      // API verification status
 delete_option('anam_api_verified_at');   // API verification timestamp
 
-// Delete the conversations table
+// Delete the transcripts table
 global $wpdb;
-$table_name = $wpdb->prefix . 'anam_conversations';
+$table_name = $wpdb->prefix . 'anam_transcripts';
 $wpdb->query("DROP TABLE IF EXISTS {$table_name}");
 
 // Clear any transients or cached data

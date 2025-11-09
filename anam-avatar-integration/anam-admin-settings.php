@@ -321,8 +321,13 @@ class AnamAdminSettings {
                 settings_fields($this->option_group);
                 do_settings_sections('anam-settings-avatar');
                 submit_button('Save Settings', 'primary', 'submit', true, array('id' => 'anam-save-settings'));
+                
+                // Check if settings exist to enable/disable reset button
+                $has_settings = !empty($options['api_key']) || !empty($options['persona_id']);
+                $disabled = $has_settings ? '' : ' disabled';
+                $style = $has_settings ? 'background: #dc3545; color: white; border-color: #dc3545;' : 'background: #ccc; color: #666; border-color: #ccc; cursor: not-allowed;';
                 ?>
-                <button type="button" id="anam-reset-button" class="button button-secondary" style="background: #dc3545; color: white; border-color: #dc3545;">
+                <button type="button" id="anam-reset-button" class="button button-secondary"<?php echo $disabled; ?> style="<?php echo $style; ?>">
                     🔄 Reset Plugin
                 </button>
             </form>
@@ -344,7 +349,7 @@ class AnamAdminSettings {
                         type: 'POST',
                         data: {
                             action: 'anam_reset_plugin',
-                            nonce: '<?php echo wp_create_nonce('anam_session'); ?>'
+                            nonce: anam_ajax.admin_nonce
                         },
                         success: function(response) {
                             if (response.success) {
@@ -394,43 +399,6 @@ class AnamAdminSettings {
                     <li><strong>Container ID:</strong> HTML element ID where avatar should appear (optional)</li>
                 </ul>
             </div>
-            
-            <script>
-            jQuery(document).ready(function($) {
-                $('#anam-reset-button').on('click', function(e) {
-                    e.preventDefault();
-                    
-                    if (!confirm('⚠️ WARNING: This will permanently delete ALL plugin settings and transcripts. This action cannot be undone.\n\nAre you absolutely sure you want to reset the plugin?')) {
-                        return;
-                    }
-                    
-                    var $button = $(this);
-                    $button.prop('disabled', true).text('🔄 Resetting...');
-                    
-                    $.ajax({
-                        url: ajaxurl,
-                        type: 'POST',
-                        data: {
-                            action: 'anam_reset_plugin',
-                            nonce: '<?php echo wp_create_nonce('anam_session'); ?>'
-                        },
-                        success: function(response) {
-                            if (response.success) {
-                                alert('✅ ' + response.data.message);
-                                window.location.href = response.data.redirect;
-                            } else {
-                                alert('❌ Error: ' + response.data);
-                                $button.prop('disabled', false).html('🔄 Reset Plugin');
-                            }
-                        },
-                        error: function(xhr, status, error) {
-                            alert('❌ Reset failed: ' + error);
-                            $button.prop('disabled', false).html('🔄 Reset Plugin');
-                        }
-                    });
-                });
-            });
-            </script>
         </div>
         <?php
     }
@@ -695,7 +663,7 @@ class AnamAdminSettings {
     
     public function parser_endpoint_url_field() {
         $options = get_option($this->option_name, array());
-        $value = isset($options['parser_endpoint_url']) ? $options['parser_endpoint_url'] : 'https://iegsoumvmhvvhmdyxhxs.supabase.co/functions/v1/key-value-processor';
+        $value = isset($options['parser_endpoint_url']) ? $options['parser_endpoint_url'] : '';
         echo '<input type="url" name="' . $this->option_name . '[parser_endpoint_url]" value="' . esc_attr($value) . '" class="large-text" placeholder="https://your-parser-endpoint.com" />';
         echo '<p class="description">The URL of your parser endpoint. This tool handles AI parsing and database storage internally.</p>';
     }
@@ -873,6 +841,10 @@ class AnamAdminSettings {
         
         if (isset($input['supabase_table'])) {
             $sanitized['supabase_table'] = sanitize_text_field($input['supabase_table']);
+        }
+        
+        if (isset($input['parser_endpoint_url'])) {
+            $sanitized['parser_endpoint_url'] = esc_url_raw($input['parser_endpoint_url']);
         }
         
         // Email notifications
@@ -1131,6 +1103,7 @@ class AnamAdminSettings {
         header('Pragma: no-cache');
         header('Expires: 0');
     }
+    
 
 }
 
@@ -1174,7 +1147,8 @@ function anam_render_sessions_page() {
                             <th style="width: 150px;">Session Start</th>
                             <th style="width: 150px;">Session End</th>
                             <th>Client Label</th>
-                            <th style="width: 100px; text-align: center;">Actions</th>
+                            <th style="width: 150px; text-align: center;">Actions</th>
+                            <th style="width: 80px; text-align: center;">Parsed</th>
                         </tr>
                     </thead>
                     <tbody id="sessions-list">
@@ -1194,6 +1168,9 @@ function anam_render_sessions_page() {
                 <div style="padding: 20px; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;">
                     <h2 style="margin: 0;">Chat Details</h2>
                     <button id="close-session-modal" style="background: none; border: none; font-size: 28px; font-weight: bold; cursor: pointer; color: #aaa;">&times;</button>
+                </div>
+                <div id="session-id-display" style="padding: 12px 20px; background: #f9f9f9; border-bottom: 1px solid #ddd; color: #666; font-size: 14px;">
+                    <strong>Session ID:</strong> <code id="current-session-id" style="background: #fff; padding: 4px 8px; border-radius: 3px; font-family: monospace;">Loading...</code>
                 </div>
                 <div class="nav-tab-wrapper" style="margin: 0; border-bottom: 1px solid #ddd;">
                     <a href="#" class="nav-tab" data-tab="session-json">Session JSON</a>

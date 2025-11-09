@@ -151,7 +151,20 @@ class Anam_Database {
             array('%s')
         );
         
-        return $result !== false;
+        // $wpdb->update returns: number of rows updated, or false on error
+        // We need to check if it's not false AND at least 1 row was updated
+        if ($result === false) {
+            error_log("❌ Database error marking session {$session_id} as parsed: " . $wpdb->last_error);
+            return false;
+        }
+        
+        if ($result === 0) {
+            error_log("⚠️ No rows updated for session {$session_id}. Session may not exist in database.");
+            return false;
+        }
+        
+        error_log("✅ Successfully marked session {$session_id} as parsed. Rows updated: {$result}");
+        return true;
     }
     
     /**
